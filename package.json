@@ -1,0 +1,16 @@
+{
+  "name": "g2g",
+  "version": "1.0.0",
+  "description": "* `/`            driver page (no login): phone + plate -> OTP -> fleet check -> dates -> transactions -> Chapa -> one download * `/admin`       staff console (login required): letters, templates (drag & drop editor), free-download tokens, payments, logs, settings, staff users",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "concurrently -n FRONTEND,BACKEND -c blue,green \"npm run dev --prefix client\" \"npm run dev --prefix server\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "concurrently": "^9.2.5"
+  }
+}

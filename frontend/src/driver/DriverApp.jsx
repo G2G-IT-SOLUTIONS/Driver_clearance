@@ -20,6 +20,7 @@ export default function DriverApp() {
   const [step, setStep] = useState(() => (urlRef && loadSess() ? "claim" : loadSess() ? stepFor(loadSess()) : "start"));
   const [phoneInput, setPhoneInput] = useState("");
   const [plate, setPlate] = useState("");
+  const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [resendIn, setResendIn] = useState(0);
@@ -36,7 +37,7 @@ export default function DriverApp() {
   const claimStarted = useRef(false);
 
   const setSess = (s) => { setSessRaw(s); s ? sessionStorage.setItem(SK, JSON.stringify(s)) : sessionStorage.removeItem(SK); };
-  const reset = () => { setSess(null); setStep("start"); setCode(""); setCash(null); setError(""); setInfo(""); setPhoneInput(""); setPlate(""); history.replaceState({}, "", "/"); };
+  const reset = () => { setSess(null); setStep("start"); setCode(""); setCash(null); setError(""); setInfo(""); setPhoneInput(""); setPlate(""); setFullName(""); history.replaceState({}, "", "/"); };
   const run = async (fn) => { setError(""); setLoading(true); try { await fn(); } catch (e) { setError(e.message); if (e.status === 401 && sess) { setSess(null); setStep("start"); } } setLoading(false); };
 
   useEffect(() => { if (resendIn <= 0) return; const t = setTimeout(() => setResendIn((s) => s - 1), 1000); return () => clearTimeout(t); }, [resendIn]);
@@ -66,10 +67,14 @@ export default function DriverApp() {
     if (compareEt(from, to) > 0) return setError("'From' date must not be after 'To' date.");
     run(async () => { setCash(await dapi("/transactions", sess.token, { etFrom: from, etTo: to })); setStep("review"); });
   };
-  const pay = () => run(async () => {
-    const d = await dapi("/pay", sess.token, sess.state === "ready" ? { etFrom: from, etTo: to } : {});
+  const nameOk = fullName.trim().split(/\s+/).filter(Boolean).length >= 2 && fullName.trim().length >= 3;
+  const pay = () => {
+    if (sess.state !== "ready" && compareEt(from, to) > 0) return setError("'From' date must not be after 'To' date.");
+    run(async () => {
+    const d = await dapi("/pay", sess.token, sess.state === "ready" ? { etFrom: from, etTo: to } : { fullName: fullName.trim(), etFrom: from, etTo: to });
     sessionStorage.setItem(SK, JSON.stringify(sess)); window.location.href = d.checkoutUrl;
-  });
+    });
+  };
   const claim = async (ref) => {
     setStep("claim"); setError(""); setLoading(true); setRetryRef(ref);
     try { await dpdf("/claim", loadSess()?.token, { reference: ref }); history.replaceState({}, "", "/"); setStep("done"); }
@@ -91,7 +96,7 @@ export default function DriverApp() {
       <button className="link" onClick={() => setShowToken(!showToken)}>{showToken ? "Hide" : "Have a download token from G2G staff?"}</button>
       {showToken && (
         <div className="tokenrow">
-          <input value={tokenInput} onChange={(e) => setTokenInput(e.target.value.toUpperCase())} placeholder="XXXX-XXXX-XXXX" maxLength={14} />
+          <input className="token-input" value={tokenInput} onChange={(e) => setTokenInput(e.target.value.toUpperCase())} placeholder="XXXX-XXXX-XXXX" maxLength={14} />
           <button className="btn primary" onClick={redeem} disabled={loading || tokenInput.replace(/[^A-Z0-9]/gi, "").length < 12}>Download</button>
         </div>
       )}
@@ -122,7 +127,11 @@ export default function DriverApp() {
               <input type="tel" inputMode="tel" placeholder="911 234 567" autoFocus value={phoneInput} onChange={(e) => setPhoneInput(e.target.value)} />
             </div>
             <label>Vehicle plate number</label>
-            <input className="plate" placeholder="e.g. A12345" value={plate} onChange={(e) => setPlate(e.target.value.toUpperCase())} />
+            <div className="phone plate-field">
+              <span className="prefix">Plate</span>
+              <input type="text" placeholder="A12345" autoCapitalize="characters" autoComplete="off" autoCorrect="off" spellCheck={false} maxLength={25} value={plate} onChange={(e) => setPlate(e.target.value.toUpperCase().replace(/[^A-Z0-9 -]/g, ""))} />
+            </div>
+            <p className="hint">Letters and numbers only, as shown on your vehicle plate.</p>
             <button className="btn primary block" disabled={loading || nineDigits.length < 9 || plate.trim().length < 3}>{loading ? <span className="spin" /> : "Next"}</button>
           </form>
         )}
@@ -145,18 +154,37 @@ export default function DriverApp() {
             <h2>Check your plate number</h2>
             <p className="sub">Your phone is verified. Please enter the plate number of your registered vehicle.</p>
             <label>Vehicle plate number</label>
-            <input className="plate" autoFocus placeholder="e.g. A12345" value={plate} onChange={(e) => setPlate(e.target.value.toUpperCase())} />
+            <div className="phone plate-field">
+              <span className="prefix">Plate</span>
+              <input type="text" autoFocus placeholder="A12345" autoCapitalize="characters" autoComplete="off" autoCorrect="off" spellCheck={false} maxLength={25} value={plate} onChange={(e) => setPlate(e.target.value.toUpperCase().replace(/[^A-Z0-9 -]/g, ""))} />
+            </div>
+            <p className="hint">Letters and numbers only, as shown on your vehicle plate.</p>
             <button className="btn primary block" disabled={loading || plate.trim().length < 3}>{loading ? <span className="spin" /> : "Continue"}</button>
           </form>
         )}
 
         {step === "nodriver" && (
-          <div className="card">
+          <div className="card wide">
             <h2>We couldn't find your record</h2>
-            <p className="sub">You can still get your letter. Pay the fee and your letter downloads right away.</p>
+            <p className="sub">You can still get your letter. Enter your name and choose the period, then pay the fee.</p>
             <Pending />
+            <label>Full name</label>
+            <div className="phone">
+              <span className="prefix">Name</span>
+              <input type="text" autoComplete="name" autoFocus placeholder="First name and father's name" maxLength={80} value={fullName} onChange={(e) => setFullName(e.target.value)} />
+            </div>
+            <p className="hint">Vehicle plate number: <strong>{sess?.plate || "—"}</strong></p>
+            <label>Period</label>
+            <p className="sub small">Choose dates in the Ethiopian calendar.</p>
+            <div className="chips">{presets.map(([l, a, b]) => <button key={l} className="chip" onClick={() => { setFrom(etDaysAgo(a)); setTo(etDaysAgo(b)); }}>{l}</button>)}</div>
+            <div className="cals">
+              <EthiopianCalendar key={"f" + fmtEt(from)} label="From" value={from} onChange={(x) => { setFrom(x); if (compareEt(x, to) > 0) setTo(x); }} />
+              <EthiopianCalendar key={"t" + fmtEt(to)} label="To" value={to} min={from} onChange={setTo} />
+            </div>
+            <div className="range">{fmtEt(from)} <span>→</span> {fmtEt(to)}</div>
             <div className="fee"><span>Letter fee</span><strong>{money(cfg.amount)} {cfg.currency}</strong></div>
-            <button className="btn primary block" onClick={pay} disabled={loading}>{loading ? <span className="spin" /> : "Pay with Chapa"}</button>
+            <p className="sub small">After payment you can download your letter <strong>once</strong>.</p>
+            <button className="btn primary block" onClick={pay} disabled={loading || !nameOk}>{loading ? <span className="spin" /> : "Pay with Chapa"}</button>
             {cfg.supportPhone && <p className="support">Need help? Call G2G on <strong>{cfg.supportPhone}</strong></p>}
             <TokenBox />
           </div>

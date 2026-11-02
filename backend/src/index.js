@@ -16,18 +16,20 @@ app.use(express.json({ limit: "25mb" })); // templates carry logo/signature/stam
 app.use("/api/driver", driverRoutes);
 app.use("/api/admin", adminRoutes);
 
-// Chapa notification: never trusted by itself - we always re-verify with Chapa's API
-app.post("/api/chapa/webhook", async (req, res) => {
+// Chapa notification: never trusted by itself - we always re-verify with Chapa's API.
+// callback_url -> GET with trx_ref, ref_id, status; webhook (if enabled in dashboard) -> POST with tx_ref
+const chapaNotify = async (req, res) => {
   try {
-    const b = req.body || {};
-    const ref = b.merchant_reference || b.reference || b.data?.merchant_reference || b.data?.reference;
+    const ref = req.query.trx_ref || req.query.tx_ref || req.body?.tx_ref || req.body?.trx_ref;
     if (ref) {
-      const { rows } = await q("SELECT * FROM payments WHERE merchant_reference=$1 OR chapa_reference=$1", [String(ref)]);
+      const { rows } = await q("SELECT * FROM payments WHERE merchant_reference=$1", [String(ref)]);
       if (rows[0]) await confirmPayment(rows[0]);
     }
-  } catch (e) { console.error("webhook error", e.message); }
-  res.json({ ok: true });
-});
+  } catch (e) { console.error("chapa notify error", e.message); }
+  res.sendStatus(200);
+};
+app.get("/api/chapa/callback", chapaNotify);
+app.post("/api/chapa/webhook", chapaNotify);
 
 // serve the built React app (npm run build in /client) from the same server
 const dist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../client/dist");

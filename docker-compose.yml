@@ -1,0 +1,74 @@
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: g2g-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: g2g
+
+    volumes:
+      - g2g_postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d g2g"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+    networks:
+      - g2g-network
+
+
+  backend:
+    build:
+      context: ./backend
+
+    container_name: g2g-backend
+    restart: unless-stopped
+
+    env_file:
+      - ./backend/.env
+
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD}@postgres:5432/g2g
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    expose:
+      - "3001"
+
+    networks:
+      - g2g-network
+
+
+  frontend:
+    build:
+      context: ./frontend
+
+    container_name: g2g-frontend
+    restart: unless-stopped
+
+    expose:
+      - "80"
+
+    depends_on:
+      - backend
+
+    networks:
+      - g2g-network
+
+volumes:
+  g2g_postgres_data:
+
+
+networks:
+  g2g-network:
+    driver: bridge

@@ -46,6 +46,13 @@ function parseRange(body) {
   if (range.days > 366) throw new HttpError(400, "Please select a period of at most one year.");
   return range;
 }
+// full name typed by a driver who is not in the fleet: at least two words (first + father's name), letters only
+function cleanName(v) {
+  const n = String(v || "").normalize("NFKC").replace(/\s+/g, " ").trim();
+  if (n.length < 3 || n.length > 80 || n.split(" ").length < 2 || !/^[\p{L}\p{M}][\p{L}\p{M} .'\-]*$/u.test(n))
+    throw new HttpError(400, "Please enter your full name (first name and father's name).");
+  return n;
+}
 function sendPdf(res, pdf, name) {
   res.set({ "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="${name}.pdf"`, "Cache-Control": "no-store", "Access-Control-Expose-Headers": "Content-Disposition" });
   res.send(pdf);
@@ -137,13 +144,19 @@ r.post("/pay", rateLimit(20, 3600e3), requireSession("ready", "no_driver"), ah(a
   const ds = req.ds, s = await getSettings();
   const amountCents = Math.round(Number(s.clearance_amount) * 100);
   if (!(amountCents >= 100)) throw new HttpError(500, "Payment is not configured yet.");
-  let scenario, snapshot;
+  let scenario, snapshot, who = ds.driver;
   if (ds.status === "ready") {
     const range = parseRange(req.body);
     const cash = await getCashCollected(ds.contractor_id, range.from, range.to);
     scenario = cash.count > 0 ? "with_transactions" : "no_transactions";
     snapshot = { driver: ds.driver, range: { etFrom: range.etFrom, etTo: range.etTo, gcFrom: range.gcFrom, gcTo: range.gcTo }, cash: { total: cash.total, count: cash.count, currency: cash.currency } };
-  } else { scenario = "no_driver"; snapshot = { driver: {}, plate: ds.plate }; }
+  } else { // not in the fleet: the plate is already known from step 1, so only the name and the period are asked
+    const name = cleanName(req.body.fullName), range = parseRange(req.body);
+    const [first, ...rest] = name.split(" ");
+    who = { name, first_name: first, last_name: rest.join(" ") };
+    scenario = "no_driver";
+    snapshot = { driver: who, plate: ds.plate, range: { etFrom: range.etFrom, etTo: range.etTo, gcFrom: range.gcFrom, gcTo: range.gcTo } };
+  }
 
   const ref = ("G2G" + Date.now().toString(36) + randomHex(3)).toUpperCase().slice(0, 20);
   const currency = s.currency || "ETB";
@@ -151,23 +164,24 @@ r.post("/pay", rateLimit(20, 3600e3), requireSession("ready", "no_driver"), ah(a
     [ref, amountCents, currency, ds.phone, ds.plate, ds.contractor_id, scenario, JSON.stringify(snapshot)]);
   try {
     const out = await initCheckout({
-      amountCents, currency, reference: ref, idempotencyKey: ins.rows[0].id,
-      customer: { first_name: ds.driver?.first_name || "Driver", last_name: ds.driver?.last_name || "G2G", phone_number: ds.phone.replace("+", "") },
-      callbackUrl: cfg.apiPublicUrl ? `${cfg.apiPublicUrl}/api/chapa/webhook` : undefined,
+      amountCents, currency, txRef: ref,
+      customer: { first_name: who?.first_name || "Driver", last_name: who?.last_name || "G2G", phone: ds.phone },
+      callbackUrl: cfg.apiPublicUrl ? `${cfg.apiPublicUrl}/api/chapa/callback` : undefined,
       returnUrl: `${cfg.publicUrl}/?ref=${ref}`, meta: { payment_id: ins.rows[0].id, scenario },
       title: "Clearance letter", description: "G2G clearance letter fee",
     });
-    await q("UPDATE payments SET checkout_url=$2, chapa_reference=$3 WHERE id=$1", [ins.rows[0].id, out.checkoutUrl, out.chapaReference]);
+    await q("UPDATE payments SET checkout_url=$2 WHERE id=$1", [ins.rows[0].id, out.checkoutUrl]);
     res.json({ checkoutUrl: out.checkoutUrl, reference: ref });
   } catch (e) { await q("UPDATE payments SET status='failed' WHERE id=$1", [ins.rows[0].id]); throw e; }
 }));
 
-// verify with Chapa and mark paid (used by claim + webhook)
+// verify with Chapa (GET /transaction/verify/<tx_ref>) and mark paid (used by claim + callback/webhook)
 export async function confirmPayment(p) {
   if (p.status === "paid") return true;
   const v = await verifyPayment(p.merchant_reference);
-  if (!v.ok || !paymentMatches(v.data, p.amount_cents, p.currency)) return false;
-  await q("UPDATE payments SET status='paid', paid_at=COALESCE(paid_at,now()), verify_payload=$2 WHERE id=$1 AND status<>'paid'", [p.id, JSON.stringify(v.data)]);
+  if (!v.ok || !paymentMatches(v.data, p.merchant_reference, p.amount_cents, p.currency)) return false;
+  await q("UPDATE payments SET status='paid', paid_at=COALESCE(paid_at,now()), chapa_reference=$3, verify_payload=$2 WHERE id=$1 AND status<>'paid'",
+    [p.id, JSON.stringify(v.data), v.data?.data?.reference || null]);
   return true;
 }
 

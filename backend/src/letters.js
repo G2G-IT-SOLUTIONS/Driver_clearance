@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import sanitizeHtml from "sanitize-html";
 import { cfg } from "./config.js";
 import { fmtEt, fmtGc, todayInEthiopia } from "./ethiopian.js";
@@ -97,12 +98,34 @@ export function renderLetterHtml(bodyHtml, elements, data) {
 }
 
 let browserP = null;
+const ARGS = ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"];
+const SYSTEM_BROWSERS = ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome-stable", "/usr/bin/google-chrome", "/snap/bin/chromium"];
+
+// Works with whatever browser the machine has: PUPPETEER_EXECUTABLE_PATH first, then the Chrome that
+// puppeteer downloaded, then Chromium / Chrome installed on the system.
+async function launchAnyBrowser(puppeteer) {
+  const tries = [];
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) tries.push(process.env.PUPPETEER_EXECUTABLE_PATH);
+  tries.push(undefined); // puppeteer's own download
+  for (const p of SYSTEM_BROWSERS) if (fs.existsSync(p) && !tries.includes(p)) tries.push(p);
+  let last;
+  for (const executablePath of tries) {
+    try { return await puppeteer.launch({ headless: true, args: ARGS, executablePath }); }
+    catch (e) { last = e; console.error(`PDF browser failed (${executablePath || "puppeteer bundled Chrome"}):`, String(e.message).split("\n")[0]); }
+  }
+  throw last;
+}
+function getBrowser(puppeteer) {
+  if (!browserP) {
+    browserP = launchAnyBrowser(puppeteer)
+      .then((b) => { b.on("disconnected", () => { browserP = null; }); return b; })
+      .catch((e) => { browserP = null; throw e; }); // don't cache a failed launch
+  }
+  return browserP;
+}
 export async function htmlToPdf(html) {
   const puppeteer = (await import("puppeteer")).default;
-  if (!browserP) {
-    browserP = puppeteer.launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox"], executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined });
-  }
-  const browser = await browserP;
+  const browser = await getBrowser(puppeteer);
   const page = await browser.newPage();
   try {
     await page.setContent(html, { waitUntil: "load" });

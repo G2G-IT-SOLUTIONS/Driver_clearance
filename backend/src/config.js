@@ -7,7 +7,10 @@ export const cfg = {
   publicUrl: (e.PUBLIC_URL || "http://localhost:5173").replace(/\/$/, ""),
   apiPublicUrl: (e.API_PUBLIC_URL || "").replace(/\/$/, ""),
   yango: { key: e.YANGO_API_KEY, client: e.YANGO_CLIENT_ID, park: e.YANGO_PARK_ID, base: "https://fleet-api.yango.tech" },
-  sms: { provider: e.SMS_PROVIDER || "console", token: e.AFROMESSAGE_TOKEN, identifier: e.AFROMESSAGE_IDENTIFIER, sender: e.AFROMESSAGE_SENDER },
+  sms: {
+    provider: e.SMS_PROVIDER || "console", // "playsms" | "console"
+    playsms: { url: e.PLAYSMS_URL, user: e.PLAYSMS_USER, token: e.PLAYSMS_TOKEN, insecureTls: String(e.PLAYSMS_INSECURE_TLS || "").toLowerCase() === "true" },
+  },
   chapaKey: e.CHAPA_SECRET_KEY,
   admin: { username: e.ADMIN_USERNAME || "admin", password: e.ADMIN_PASSWORD || "ChangeMe123!", name: e.ADMIN_NAME || "Administrator" },
 };

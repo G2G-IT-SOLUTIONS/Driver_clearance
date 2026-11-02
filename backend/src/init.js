@@ -30,14 +30,17 @@ if (!admin.rowCount) {
 
 const head = `<p style="text-align:center"><strong style="font-size:22px">G2G</strong></p><p style="text-align:center"><strong>CLEARANCE LETTER</strong></p><p style="text-align:right">Ref: {{letter_ref}}<br>Date: {{letter_date_et}} ({{letter_date_gc}})</p><p>To whom it may concern,</p>`;
 const foot = `<p>For any support please contact G2G on {{support_phone}}.</p><p><br></p><p>Sincerely,<br><strong>G2G</strong></p>`;
+const OLD_ND = `${head}<p>This is to confirm that no driver record was found in our fleet registry for the phone number <strong>{{driver_phone}}</strong> and plate number <strong>{{plate_number}}</strong> as of {{letter_date_gc}}.</p><p>Clearance fee of {{payment_amount}} was received on {{payment_date}} (payment ref. {{payment_reference}}).</p>${foot}`;
 const TPL = {
   with_transactions: ["Default - with transactions", `${head}<p>This is to confirm that <strong>{{driver_name}}</strong> (phone {{driver_phone}}, driver license {{license_number}}), operating the vehicle {{vehicle_brand}} {{vehicle_model}} {{vehicle_year}} with plate number <strong>{{plate_number}}</strong>, collected a total of <strong>{{total_cash_collected}} {{currency}}</strong> in cash across {{transaction_count}} transaction(s) between {{date_from_et}} ({{date_from_gc}}) and {{date_to_et}} ({{date_to_gc}}).</p><p>Clearance fee of {{payment_amount}} was received on {{payment_date}} (payment ref. {{payment_reference}}).</p>${foot}`],
   no_transactions: ["Default - no transactions", `${head}<p>This is to confirm that <strong>{{driver_name}}</strong> (phone {{driver_phone}}, driver license {{license_number}}), operating the vehicle {{vehicle_brand}} {{vehicle_model}} with plate number <strong>{{plate_number}}</strong>, has <strong>no cash collected transactions</strong> between {{date_from_et}} ({{date_from_gc}}) and {{date_to_et}} ({{date_to_gc}}).</p><p>Clearance fee of {{payment_amount}} was received on {{payment_date}} (payment ref. {{payment_reference}}).</p>${foot}`],
-  no_driver: ["Default - customer not found", `${head}<p>This is to confirm that no driver record was found in our fleet registry for the phone number <strong>{{driver_phone}}</strong> and plate number <strong>{{plate_number}}</strong> as of {{letter_date_gc}}.</p><p>Clearance fee of {{payment_amount}} was received on {{payment_date}} (payment ref. {{payment_reference}}).</p>${foot}`],
+  no_driver: ["Default - customer not found", `${head}<p>This is to confirm that no driver record was found in our fleet registry for <strong>{{driver_name}}</strong> (phone {{driver_phone}}) with plate number <strong>{{plate_number}}</strong> for the period between {{date_from_et}} ({{date_from_gc}}) and {{date_to_et}} ({{date_to_gc}}), as of {{letter_date_gc}}.</p><p>Clearance fee of {{payment_amount}} was received on {{payment_date}} (payment ref. {{payment_reference}}).</p>${foot}`],
 };
 for (const [sc, [name, html]] of Object.entries(TPL)) {
   const has = await q("SELECT 1 FROM letter_templates WHERE default_for=$1", [sc]);
   if (!has.rowCount) await q("INSERT INTO letter_templates(name,default_for,body_html) VALUES($1,$2,$3)", [name, sc, html]);
 }
+// the "customer not found" letter now carries the typed name and the period: upgrade the old default text if nobody edited it
+await q("UPDATE letter_templates SET body_html=$1 WHERE default_for='no_driver' AND body_html=$2", [TPL.no_driver[1], OLD_ND]);
 console.log("Database ready.");
 await pool.end();

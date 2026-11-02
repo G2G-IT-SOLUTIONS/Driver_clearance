@@ -42,8 +42,8 @@ services:
       postgres:
         condition: service_healthy
 
-    expose:
-      - "3001"
+    ports:
+      - "127.0.0.1:4001:3001"
 
     networks:
       - g2g-network
@@ -56,8 +56,8 @@ services:
     container_name: g2g-frontend
     restart: unless-stopped
 
-    expose:
-      - "80"
+    ports:
+      - "127.0.0.1:4000:80"
 
     depends_on:
       - backend

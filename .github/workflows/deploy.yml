@@ -23,14 +23,35 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
 
-      - name: Add server to known hosts
+            - name: Add server to known hosts
         env:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
         run: |
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
+          set -e
+
+          echo "Checking server configuration..."
+
+          if [ -z "$SERVER_HOST" ]; then
+            echo "ERROR: SERVER_HOST secret is empty!"
+            exit 1
+          fi
+
+          echo "Server: $SERVER_HOST"
+
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+
+          echo "Testing SSH port 22..."
+
+          if ! ssh-keyscan -T 10 -H "$SERVER_HOST" >> "$HOME/.ssh/known_hosts"; then
+            echo "ERROR: Cannot retrieve SSH host key."
+            echo "Check server IP, network connectivity and SSH port 22."
+            exit 1
+          fi
+
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+          echo "SSH host key configured successfully."
 
       - name: Deploy application
         env:

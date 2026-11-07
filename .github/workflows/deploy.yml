@@ -1,0 +1,86 @@
+```yaml
+name: Deploy Driver Clearance
+
+on:
+  push:
+    branches:
+      - master
+
+  workflow_dispatch:
+
+concurrency:
+  group: driver-clearance-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Configure SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
+
+      - name: Add server to known hosts
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy application
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          ssh "$SERVER_USER@$SERVER_HOST" 'bash -s' <<'REMOTE'
+            set -euo pipefail
+
+            cd /home/wubrist/Driver_clearance
+
+            echo "Checking deployment branch..."
+
+            CURRENT_BRANCH=$(git branch --show-current)
+
+            if [ "$CURRENT_BRANCH" != "master" ]; then
+              echo "ERROR: Server is not on master branch."
+              exit 1
+            fi
+
+            echo "Checking for local tracked changes..."
+
+            if ! git diff --quiet || ! git diff --cached --quiet; then
+              echo "ERROR: Server has local tracked changes. Deployment stopped."
+              exit 1
+            fi
+
+            echo "Fetching latest code..."
+            git pull --ff-only origin master
+
+            echo "Building frontend and backend..."
+            docker compose -p driver_clearance build backend frontend
+
+            echo "Updating frontend and backend only..."
+            docker compose -p driver_clearance up -d --no-deps backend frontend
+
+            echo "Checking application containers..."
+
+            for container in g2g-frontend g2g-backend; do
+              STATUS=$(docker inspect -f '{{.State.Status}}' "$container")
+
+              if [ "$STATUS" != "running" ]; then
+                echo "ERROR: $container is not running."
+                exit 1
+              fi
+
+              echo "$container: $STATUS"
+            done
+
+            echo "Deployment completed successfully."
+          REMOTE
+```

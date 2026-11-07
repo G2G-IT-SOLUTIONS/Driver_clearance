@@ -1,4 +1,3 @@
-```yaml
 name: Deploy Driver Clearance
 
 on:
@@ -83,4 +82,4 @@ jobs:
 
             echo "Deployment completed successfully."
           REMOTE
-```
+

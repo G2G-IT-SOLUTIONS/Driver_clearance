@@ -27,6 +27,8 @@ jobs:
         env:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
         run: |
+          set -e
+
           echo "Checking server configuration..."
 
           if [ -z "$SERVER_HOST" ]; then
@@ -35,26 +37,55 @@ jobs:
           fi
 
           echo "Server: $SERVER_HOST"
+          echo "Testing TCP connection to port 22..."
 
-          echo "Testing SSH port 22..."
+          python3 - "$SERVER_HOST" <<'PY'
+          import socket
+          import sys
 
-          if ! ssh-keyscan -T 10 -H "$SERVER_HOST" > /tmp/known_hosts; then
-            echo "ERROR: Cannot retrieve SSH host key."
+          host = sys.argv[1]
+
+          try:
+              connection = socket.create_connection((host, 22), timeout=15)
+              print(f"SUCCESS: {host}:22 is reachable.")
+              connection.close()
+          except Exception as error:
+              print(f"ERROR: Cannot connect to {host}:22")
+              print(f"Reason: {error}")
+              sys.exit(1)
+          PY
+
+          echo "Retrieving SSH host key..."
+
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+
+          if ! ssh-keyscan -T 15 -p 22 -H "$SERVER_HOST" > /tmp/known_hosts 2>/tmp/keyscan_error.log; then
+            echo "ERROR: ssh-keyscan failed."
+            cat /tmp/keyscan_error.log
             exit 1
           fi
 
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          cat /tmp/known_hosts >> ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
+          if [ ! -s /tmp/known_hosts ]; then
+            echo "ERROR: No SSH host key was returned."
+            cat /tmp/keyscan_error.log
+            exit 1
+          fi
 
-          echo "SSH connectivity check completed."
+          cat /tmp/known_hosts >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+          echo "SSH host key retrieved successfully."
 
       - name: Deploy application
         env:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
           SERVER_USER: ${{ secrets.SERVER_USER }}
         run: |
+          set -e
+
+          echo "Connecting to deployment server..."
+
           ssh "$SERVER_USER@$SERVER_HOST" 'bash -s' <<'REMOTE'
             set -euo pipefail
 
@@ -77,12 +108,15 @@ jobs:
             fi
 
             echo "Fetching latest code..."
+
             git pull --ff-only origin master
 
             echo "Building frontend and backend..."
+
             docker compose -p driver_clearance build backend frontend
 
             echo "Updating frontend and backend only..."
+
             docker compose -p driver_clearance up -d --no-deps backend frontend
 
             echo "Checking application containers..."

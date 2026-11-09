@@ -9,7 +9,7 @@ import { cfg } from "./config.js";
 const here = path.dirname(fileURLToPath(import.meta.url));
 await q(fs.readFileSync(path.join(here, "../db/schema.sql"), "utf8"));
 
-for (const [k, v] of [["clearance_amount", "100"], ["currency", "ETB"], ["support_phone", "+251 900 000 000"]])
+for (const [k, v] of [["clearance_amount", "100"], ["currency", "ETB"], ["support_phone", "+251 900 000 000"], ["letter_max_edits", "2"], ["letter_edit_days", "2"], ["letter_max_sends", "2"]])
   await q("INSERT INTO settings(key,value) VALUES($1,$2) ON CONFLICT DO NOTHING", [k, v]);
 
 const MSGS = [

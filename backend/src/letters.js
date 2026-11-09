@@ -91,8 +91,13 @@ html,body{margin:0;padding:0;background:#fff}
 .body ul,.body ol{margin:0 0 .6em 1.4em;padding:0}.body table{border-collapse:collapse;width:100%}.body td,.body th{border:1px solid #999;padding:6px}
 .body img{max-width:100%}.fl{position:absolute;display:block;object-fit:contain}`;
 
-export function renderLetterHtml(bodyHtml, elements, data) {
-  const body = String(bodyHtml).replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => (data[k] !== undefined && data[k] !== "" ? esc(data[k]) : "—"));
+// {{placeholders}} -> values (HTML-escaped; empty values show a dash)
+export const fillPlaceholders = (bodyHtml, data) =>
+  String(bodyHtml).replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => (data[k] !== undefined && data[k] !== "" ? esc(data[k]) : "—"));
+
+// raw = the body already holds the final text (a letter edited by staff): do not look for placeholders again
+export function renderLetterHtml(bodyHtml, elements, data, { raw = false } = {}) {
+  const body = raw ? String(bodyHtml) : fillPlaceholders(bodyHtml, data);
   const imgs = (elements || []).map((e) => `<img class="fl" alt="" src="${esc(e.src)}" style="left:${num(e.x)}px;top:${num(e.y)}px;width:${num(e.w)}px;height:${num(e.h)}px">`).join("");
   return `<!doctype html><html><head><meta charset="utf-8"><style>${CSS}</style></head><body><div class="page"><div class="body">${body}</div>${imgs}</div></body></html>`;
 }

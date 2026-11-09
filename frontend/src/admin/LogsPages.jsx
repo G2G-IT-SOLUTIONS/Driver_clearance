@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { adm } from "../api.js";
 import { Badge, PageHead, Empty, ErrorBar, fmt } from "./ui.jsx";
 
-const Details = ({ d }) => <code className="a-json">{Object.entries(d || {}).map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`).join("\n")}</code>;
+const Details = ({ d }) => <code className="a-json">{Object.entries(d || {}).filter(([k]) => k !== "diff").map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`).join("\n")}{d?.diff ? "\n(the exact words added / removed are shown in the letter's History tab)" : ""}</code>;
 
 export function ActivityPage() {
   const [rows, setRows] = useState(null), [err, setErr] = useState("");

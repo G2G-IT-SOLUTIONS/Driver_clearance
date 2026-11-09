@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { adm, ADMIN_TOKEN, ADMIN_USER } from "../api.js";
 import "./admin.css";
 
+
 export default function Login() {
   const nav = useNavigate();
   const [f, setF] = useState({ username: "", password: "" });
@@ -17,7 +18,7 @@ export default function Login() {
   };
   return (
     <div className="a-login">
-      <div className="a-login-art"><span className="a-logo big">G2G</span><h1>Clearance letters,<br />under control.</h1><p>Manage templates, payments and free re-downloads in one place.</p></div>
+                <div className="a-login-art"><div className="a-login-plate"><img src="../../public/logo-full.png.png" alt="G2G IT Solutions" /></div><h1>Clearance letters<br /></h1><p>Manage templates, payments and downloads.</p></div>
       <form className="a-login-card" onSubmit={submit}>
         <h2>Staff sign in</h2><p className="a-muted">Use your G2G staff account.</p>
         {err && <div className="a-error">{err}</div>}

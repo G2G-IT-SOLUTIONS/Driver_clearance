@@ -16,8 +16,8 @@ export const requireStaff = (...roles) => ah(async (req, res, next) => {
   next();
 });
 
-// append-only audit trail
-export async function logAct(req, action, entityType = null, entityId = null, details = {}) {
-  await q("INSERT INTO activity_logs(staff_id,staff_name,action,entity_type,entity_id,details,ip) VALUES($1,$2,$3,$4,$5,$6,$7)",
+// append-only audit trail. Pass a transaction client as the last argument to log inside that transaction.
+export async function logAct(req, action, entityType = null, entityId = null, details = {}, client = null) {
+  await (client || { query: q }).query("INSERT INTO activity_logs(staff_id,staff_name,action,entity_type,entity_id,details,ip) VALUES($1,$2,$3,$4,$5,$6,$7)",
     [req.staff?.id || null, req.staff?.full_name || details.username || null, action, entityType, entityId ? String(entityId) : null, JSON.stringify(details), req.ip]);
 }

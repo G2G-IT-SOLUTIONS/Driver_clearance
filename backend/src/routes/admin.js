@@ -1,9 +1,11 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { pool, q } from "../db.js";
-import { ah, HttpError, rateLimit, sha256, newToken } from "../util.js";
+import { ah, HttpError, rateLimit } from "../util.js";
 import { requireStaff, signStaff, logAct } from "../auth.js";
 import { VARIABLES, SAMPLE_DATA, cleanBody, cleanElements, renderLetterHtml, htmlToPdf } from "../letters.js";
+import { limitsOf, editLetter, sendLetter, setLimits, letterDefaults } from "../letterflow.js";
+import { withSeal } from "../seal.js";
 
 const r = Router();
 const staff = requireStaff(), adminOnly = requireStaff("admin");
@@ -81,81 +83,68 @@ r.post("/preview", staff, ah(async (req, res) => {
   res.json({ html: renderLetterHtml(cleanBody(req.body.body_html), cleanElements(req.body.elements), data) });
 }));
 
-// ---------- downloaded letters ----------
+// ---------- letters of paid orders: waiting for staff / sent ----------
+// There is no endpoint that creates a letter or chooses a phone number: staff only EDIT and SEND letters of customers who paid.
+// how many paid letters are waiting for staff + the newest ones (the console polls this to show the notification)
+r.get("/letters/unsent", staff, ah(async (req, res) => {
+  const count = (await q("SELECT count(*)::int AS n FROM downloaded_letters WHERE source='payment' AND status='unsent'")).rows[0].n;
+  const latest = (await q("SELECT id,letter_ref,driver_name,plate,downloaded_at FROM downloaded_letters WHERE source='payment' AND status='unsent' ORDER BY downloaded_at DESC LIMIT 5")).rows;
+  res.json({ count, latest });
+}));
+const pickLimits = (l) => { const m = limitsOf(l); return { edits_left: m.edits_left, sends_left: m.sends_left, edit_until: m.edit_until, can_edit: m.can_edit, can_send: m.can_send }; };
 r.get("/letters", staff, ah(async (req, res) => {
-  const s = String(req.query.q || "").trim();
+  const s = String(req.query.q || "").trim(), st = ["unsent", "sent", "downloaded"].includes(req.query.status) ? req.query.status : null;
   const { rows } = await q(`
-    SELECT l.id,l.letter_ref,l.source,l.scenario,l.phone,l.plate,l.driver_name,l.contractor_id,l.downloaded_at,l.reason,l.template_name,
+    SELECT l.id,l.letter_ref,l.source,l.status,l.scenario,l.phone,l.plate,l.driver_name,l.contractor_id,l.downloaded_at,l.reason,l.template_name,
+           l.edit_count,l.max_edits,l.send_count,l.max_sends,l.edit_window_days,l.last_sent_at,l.open_count,l.last_opened_at,
            p.merchant_reference, p.amount_cents, p.currency, p.status AS pay_status, p.paid_at, u.full_name AS issued_by_name
     FROM downloaded_letters l LEFT JOIN payments p ON p.id=l.payment_id LEFT JOIN users u ON u.id=l.issued_by
     WHERE ($1::text IS NULL OR l.phone ILIKE $1 OR l.plate ILIKE $1 OR l.driver_name ILIKE $1 OR l.letter_ref ILIKE $1 OR p.merchant_reference ILIKE $1)
       AND ($2::date IS NULL OR COALESCE(p.paid_at,l.downloaded_at) >= $2::date)
       AND ($3::date IS NULL OR COALESCE(p.paid_at,l.downloaded_at) < $3::date + 1)
-    ORDER BY l.downloaded_at DESC LIMIT 300`,
-    [s ? `%${s}%` : null, req.query.from || null, req.query.to || null]);
-  res.json(rows);
+      AND ($4::text IS NULL OR l.status = $4)
+    ORDER BY (l.status='unsent') DESC, l.downloaded_at DESC LIMIT 300`,
+    [s ? `%${s}%` : null, req.query.from || null, req.query.to || null, st]);
+  res.json(rows.map((l) => ({ ...l, ...pickLimits(l) })));
 }));
 r.get("/letters/:id", staff, ah(async (req, res) => {
   const { rows } = await q(`
     SELECT l.*, p.merchant_reference, p.chapa_reference, p.amount_cents, p.currency, p.status AS pay_status, p.paid_at, p.created_at AS pay_created, p.snapshot,
-           u.full_name AS issued_by_name,
-           (SELECT count(*) FROM download_tokens t WHERE t.source_letter_id=l.id) AS tokens_issued
+           u.full_name AS issued_by_name
     FROM downloaded_letters l LEFT JOIN payments p ON p.id=l.payment_id LEFT JOIN users u ON u.id=l.issued_by WHERE l.id=$1`, [req.params.id]);
-  if (!rows[0]) throw new HttpError(404, "Letter not found.");
-  res.json(rows[0]);
+  const l = rows[0];
+  if (!l) throw new HttpError(404, "Letter not found.");
+  // the history of THIS letter = its rows in the activity log (created, edits with what was added/removed, sends, opens, limit changes ...)
+  const history = (await q("SELECT id,staff_name,action,details,ip,created_at FROM activity_logs WHERE entity_type='letter' AND entity_id=$1 ORDER BY id", [l.id])).rows;
+  res.json({ ...l, rendered_html: l.source === "payment" ? withSeal(l.rendered_html) : l.rendered_html, tpl_body_html: undefined, link_token_hash: undefined, limits: limitsOf(l), history });
+}));
+// the editable text of a letter (for the editor)
+r.get("/letters/:id/editable", staff, ah(async (req, res) => {
+  const l = (await q("SELECT id,letter_ref,driver_name,phone,plate,source,status,body_html,elements,downloaded_at,max_edits,max_sends,edit_window_days,edit_count,send_count FROM downloaded_letters WHERE id=$1", [req.params.id])).rows[0];
+  if (!l) throw new HttpError(404, "Letter not found.");
+  res.json({ ...l, limits: limitsOf(l) });
+}));
+r.put("/letters/:id", staff, ah(async (req, res) => {
+  res.json(await editLetter({ id: req.params.id, staff: req.staff, ip: req.ip, body_html: req.body.body_html, elements: req.body.elements }));
+}));
+r.post("/letters/:id/send", staff, ah(async (req, res) => {
+  res.json(await sendLetter({ id: req.params.id, staff: req.staff, ip: req.ip })); // no phone in the request: it always goes to the driver's verified number
+}));
+r.put("/letters/:id/limits", adminOnly, ah(async (req, res) => {
+  res.json(await setLimits({ id: req.params.id, staff: req.staff, ip: req.ip, ...req.body }));
 }));
 r.get("/letters/:id/pdf", staff, ah(async (req, res) => {
-  const { rows } = await q("SELECT letter_ref, rendered_html FROM downloaded_letters WHERE id=$1", [req.params.id]);
+  const { rows } = await q("SELECT letter_ref, source, rendered_html FROM downloaded_letters WHERE id=$1", [req.params.id]);
   if (!rows[0]) throw new HttpError(404, "Letter not found.");
   await logAct(req, "LETTER_DOWNLOAD_ADMIN", "letter", req.params.id, { letter_ref: rows[0].letter_ref });
   res.set({ "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="${rows[0].letter_ref}.pdf"`, "Access-Control-Expose-Headers": "Content-Disposition" });
-  res.send(await htmlToPdf(rows[0].rendered_html));
-}));
-
-// ---------- free-download tokens ----------
-r.get("/tokens", staff, ah(async (req, res) => {
-  const { rows } = await q(`
-    SELECT t.id,t.token_hint,t.phone,t.plate,t.driver_name,t.reason,t.created_at,t.used_at,t.source_letter_id,t.used_letter_id,
-           l.letter_ref AS source_ref, ul.letter_ref AS used_ref, tp.name AS template_name, tp.kind AS template_kind, u.full_name AS created_by_name
-    FROM download_tokens t JOIN downloaded_letters l ON l.id=t.source_letter_id LEFT JOIN downloaded_letters ul ON ul.id=t.used_letter_id
-    JOIN letter_templates tp ON tp.id=t.template_id JOIN users u ON u.id=t.created_by ORDER BY t.created_at DESC LIMIT 500`);
-  res.json(rows);
-}));
-// body: { letterId, reason, templateId }  OR  { letterId, reason, template:{name,body_html,elements,saveAs:'template'|'driver_only'} }
-r.post("/tokens", staff, ah(async (req, res) => {
-  const reason = String(req.body.reason || "").trim().slice(0, 500);
-  if (reason.length < 3) throw new HttpError(400, "Please write the reason for this free download.");
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const letter = (await client.query("SELECT id,letter_ref,phone,plate,contractor_id,driver_name FROM downloaded_letters WHERE id=$1", [req.body.letterId])).rows[0];
-    if (!letter) throw new HttpError(404, "Letter not found.");
-    let templateId = req.body.templateId, templateName;
-    if (templateId) {
-      const t = (await client.query("SELECT id,name FROM letter_templates WHERE id=$1", [templateId])).rows[0];
-      if (!t) throw new HttpError(404, "Template not found.");
-      templateName = t.name;
-    } else if (req.body.template) {
-      const t = tplBody(req.body.template), only = req.body.template.saveAs === "driver_only";
-      const ins = await client.query("INSERT INTO letter_templates(name,kind,body_html,elements,for_contractor_id,created_by,updated_by) VALUES($1,$2,$3,$4,$5,$6,$6) RETURNING id",
-        [t.name, only ? "driver_only" : "standard", t.body, JSON.stringify(t.elements), only ? letter.contractor_id : null, req.staff.id]);
-      templateId = ins.rows[0].id; templateName = t.name;
-      await logAct({ staff: req.staff, ip: req.ip }, "TEMPLATE_CREATE", "template", templateId, { name: t.name, kind: only ? "driver_only" : "standard", for_letter: letter.letter_ref });
-    } else throw new HttpError(400, "Choose a template.");
-
-    const tok = newToken();
-    const ins = await client.query(`INSERT INTO download_tokens(token_hash,token_hint,contractor_id,phone,plate,driver_name,source_letter_id,template_id,reason,created_by)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`, [sha256(tok.raw), tok.raw.slice(-4), letter.contractor_id, letter.phone, letter.plate, letter.driver_name, letter.id, templateId, reason, req.staff.id]);
-    await client.query("COMMIT");
-    await logAct(req, "TOKEN_CREATE", "token", ins.rows[0].id, { for_letter: letter.letter_ref, phone: letter.phone, plate: letter.plate, driver: letter.driver_name, template: templateName, reason, token_hint: tok.raw.slice(-4) });
-    res.json({ token: tok.pretty, id: ins.rows[0].id });
-  } catch (e) { await client.query("ROLLBACK").catch(() => {}); throw e; } finally { client.release(); }
+  res.send(await htmlToPdf(rows[0].source === "payment" ? withSeal(rows[0].rendered_html) : rows[0].rendered_html));
 }));
 
 // ---------- payments / logs ----------
 r.get("/payments", staff, ah(async (req, res) => {
   const { rows } = await q(`SELECT p.id,p.merchant_reference,p.chapa_reference,p.amount_cents,p.currency,p.status,p.phone,p.plate,p.scenario,p.created_at,p.paid_at,p.consumed_at,
-    l.letter_ref, p.snapshot->'driver'->>'name' AS driver_name FROM payments p LEFT JOIN downloaded_letters l ON l.id=p.letter_id ORDER BY p.created_at DESC LIMIT 500`);
+    l.letter_ref, l.id AS letter_id, l.status AS letter_status, p.snapshot->'driver'->>'name' AS driver_name FROM payments p LEFT JOIN downloaded_letters l ON l.id=p.letter_id ORDER BY p.created_at DESC LIMIT 500`);
   res.json(rows);
 }));
 r.get("/logs/activity", staff, ah(async (req, res) => {
@@ -168,17 +157,26 @@ r.get("/logs/errors", staff, ah(async (req, res) => {
 // ---------- settings (admin only) ----------
 r.get("/settings", adminOnly, ah(async (req, res) => {
   const s = Object.fromEntries((await q("SELECT key,value FROM settings")).rows.map((x) => [x.key, x.value]));
-  const messages = (await q("SELECT code,description,message,updated_at FROM error_messages ORDER BY code")).rows;
-  res.json({ clearance_amount: s.clearance_amount, currency: s.currency, support_phone: s.support_phone, messages });
+  const messages = (await q("SELECT code,description,message,updated_at FROM error_messages WHERE code NOT LIKE 'TOKEN\\_%' ORDER BY code")).rows;
+  const d = await letterDefaults();
+  res.json({ clearance_amount: s.clearance_amount, currency: s.currency, support_phone: s.support_phone, letter_max_edits: d.max_edits, letter_edit_days: d.edit_window_days, letter_max_sends: d.max_sends, messages });
 }));
 r.put("/settings", adminOnly, ah(async (req, res) => {
   const amount = Number(req.body.clearance_amount);
   if (!(amount >= 1) || amount > 1000000) throw new HttpError(400, "Enter a valid payment amount (at least 1).");
   const phone = String(req.body.support_phone || "").trim().slice(0, 40);
-  const old = Object.fromEntries((await q("SELECT key,value FROM settings WHERE key IN ('clearance_amount','support_phone')")).rows.map((x) => [x.key, x.value]));
-  for (const [k, v] of [["clearance_amount", String(amount)], ["support_phone", phone]])
-    await q("INSERT INTO settings(key,value,updated_by) VALUES($1,$2,$3) ON CONFLICT (key) DO UPDATE SET value=$2, updated_by=$3, updated_at=now()", [k, v, req.staff.id]);
-  await logAct(req, "SETTINGS_UPDATE", "settings", null, { clearance_amount: { from: old.clearance_amount, to: String(amount) }, support_phone: { from: old.support_phone, to: phone } });
+  const whole = (v, lo, hi, what) => { const n = Number(v); if (v === "" || v == null || !Number.isInteger(n) || n < lo || n > hi) throw new HttpError(400, `${what} must be a whole number from ${lo} to ${hi}.`); return String(n); };
+  const next = {
+    clearance_amount: String(amount), support_phone: phone,
+    letter_max_edits: whole(req.body.letter_max_edits, 0, 50, "Maximum edits"),
+    letter_edit_days: whole(req.body.letter_edit_days, 0, 365, "Editing period (days)"),
+    letter_max_sends: whole(req.body.letter_max_sends, 0, 50, "Maximum sends"),
+  };
+  const keys = Object.keys(next);
+  const old = Object.fromEntries((await q("SELECT key,value FROM settings WHERE key = ANY($1)", [keys])).rows.map((x) => [x.key, x.value]));
+  for (const k of keys)
+    await q("INSERT INTO settings(key,value,updated_by) VALUES($1,$2,$3) ON CONFLICT (key) DO UPDATE SET value=$2, updated_by=$3, updated_at=now()", [k, next[k], req.staff.id]);
+  await logAct(req, "SETTINGS_UPDATE", "settings", null, Object.fromEntries(keys.filter((k) => old[k] !== next[k]).map((k) => [k, { from: old[k], to: next[k] }])));
   res.json({ ok: true });
 }));
 r.put("/messages/:code", adminOnly, ah(async (req, res) => {

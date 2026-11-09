@@ -8,9 +8,9 @@ export const sha256 = (s) => crypto.createHash("sha256").update(String(s)).diges
 export const randomHex = (n = 32) => crypto.randomBytes(n).toString("hex");
 
 const hits = new Map();
-export function rateLimit(max, windowMs) {
+export function rateLimit(max, windowMs, scope) { // scope: share one counter between paths (links that carry a token in the URL)
   return (req, res, next) => {
-    const key = `${req.baseUrl}${req.path}:${req.ip}`;
+    const key = `${req.baseUrl}${scope || req.path}:${req.ip}`;
     const now = Date.now();
     const arr = (hits.get(key) || []).filter((t) => now - t < windowMs);
     if (arr.length >= max) return next(new HttpError(429, "Too many requests. Please wait a bit and try again."));

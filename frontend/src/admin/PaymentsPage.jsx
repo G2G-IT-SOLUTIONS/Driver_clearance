@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { adm } from "../api.js";
-import { Badge, PageHead, Empty, ErrorBar, fmt, SCENARIOS } from "./ui.jsx";
+import { Badge, PageHead, Empty, ErrorBar, fmt, SCENARIOS, STATUS } from "./ui.jsx";
 
 export default function PaymentsPage() {
   const [rows, setRows] = useState(null), [err, setErr] = useState("");
@@ -19,7 +20,7 @@ export default function PaymentsPage() {
             <td>{(p.amount_cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })} {p.currency}</td>
             <td><Badge tone={p.status}>{p.status}</Badge></td>
             <td>{fmt(p.created_at)}</td><td>{fmt(p.paid_at)}</td>
-            <td>{p.letter_ref || (p.status === "paid" ? <Badge tone="amber">Not downloaded</Badge> : "—")}</td>
+            <td>{p.letter_ref ? <><Link className="a-link" to={`/admin/letters?tab=all&id=${p.letter_id}`}>{p.letter_ref}</Link><small><Badge tone={p.letter_status}>{STATUS[p.letter_status] || p.letter_status}</Badge></small></> : (p.status === "paid" ? <Badge tone="amber">Letter being created</Badge> : "—")}</td>
           </tr>))}</tbody>
       </table>{rows && !rows.length && <Empty>No payments yet.</Empty>}</div></section>
     </>

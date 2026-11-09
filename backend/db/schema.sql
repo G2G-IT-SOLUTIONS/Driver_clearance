@@ -163,3 +163,30 @@ CREATE TRIGGER activity_logs_immutable BEFORE UPDATE OR DELETE ON activity_logs
 DROP TRIGGER IF EXISTS error_logs_immutable ON error_logs;
 CREATE TRIGGER error_logs_immutable BEFORE UPDATE OR DELETE ON error_logs
   FOR EACH ROW EXECUTE FUNCTION forbid_change();
+
+
+-- =====================================================================================
+-- v3: a paid letter is checked by staff before the driver gets it. NO new tables: the letter keeps its own
+-- counters/limits here, and its whole history (created / edited with what was added+removed / sent / opened /
+-- limits changed) is written to the existing append-only activity_logs (entity_type='letter', entity_id=<letter id>).
+-- Lifecycle:  unsent (waiting for staff)  ->  sent (SMS link sent)       old letters keep 'downloaded'
+-- (idempotent: safe to run again)
+-- =====================================================================================
+ALTER TABLE downloaded_letters
+  ADD COLUMN IF NOT EXISTS status            text    NOT NULL DEFAULT 'downloaded',
+  ADD COLUMN IF NOT EXISTS body_html         text,                    -- current letter text, placeholders already filled in (editable)
+  ADD COLUMN IF NOT EXISTS elements          jsonb,                   -- current floating images (logo / signature / stamp)
+  ADD COLUMN IF NOT EXISTS max_edits         integer NOT NULL DEFAULT 2,
+  ADD COLUMN IF NOT EXISTS max_sends         integer NOT NULL DEFAULT 2,
+  ADD COLUMN IF NOT EXISTS edit_window_days  integer NOT NULL DEFAULT 2,   -- editing closes this many days after the letter was created
+  ADD COLUMN IF NOT EXISTS edit_count        integer NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS send_count        integer NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS last_edited_at    timestamptz,
+  ADD COLUMN IF NOT EXISTS last_sent_at      timestamptz,
+  ADD COLUMN IF NOT EXISTS link_token_hash   text,                    -- sha256 of the token inside the SMS link (a new send replaces it)
+  ADD COLUMN IF NOT EXISTS link_token_hint   text,
+  ADD COLUMN IF NOT EXISTS open_count        integer NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS last_opened_at    timestamptz;
+CREATE INDEX IF NOT EXISTS ix_letters_status ON downloaded_letters(status, downloaded_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_letters_link ON downloaded_letters(link_token_hash) WHERE link_token_hash IS NOT NULL;
+CREATE INDEX IF NOT EXISTS ix_activity_entity ON activity_logs(entity_type, entity_id, id);

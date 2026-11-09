@@ -2,18 +2,16 @@ import { Router } from "express";
 import crypto from "node:crypto";
 import { pool, q } from "../db.js";
 import { cfg } from "../config.js";
-import { ah, HttpError, rateLimit, sha256, randomHex, cleanToken } from "../util.js";
+import { ah, HttpError, rateLimit, sha256, randomHex } from "../util.js";
 import { normalizePhone, normalizePlate, findDriversByPhone, matchByPlate, driverSnapshot, getCashCollected } from "../yango.js";
 import { sendSms } from "../sms.js";
-import { initCheckout, verifyPayment, paymentMatches } from "../chapa.js";
-import { buildData, renderLetterHtml, htmlToPdf } from "../letters.js";
-import { issueLetter } from "../issue.js";
+import { initCheckout } from "../chapa.js";
+import { getSettings, fulfilPayment } from "../payments.js";
 import { validEt, toApiRange } from "../ethiopian.js";
 
 const r = Router();
 const OTP_TTL = 5 * 60 * 1000, RESEND = 60 * 1000, MAX_OTP_TRIES = 5, MAX_PLATE_TRIES = 5, SESSION_TTL = 60 * 60 * 1000;
 
-async function getSettings(c = pool) { const { rows } = await c.query("SELECT key,value FROM settings"); return Object.fromEntries(rows.map((x) => [x.key, x.value])); }
 async function msg(code, c = pool) { const { rows } = await c.query("SELECT message FROM error_messages WHERE code=$1", [code]); return rows[0]?.message || code; }
 async function logErr(req, code, phone, plate, details = {}) {
   const message = await msg(code);
@@ -35,8 +33,14 @@ const requireSession = (...states) => ah(async (req, res, next) => {
   if (states.length && !states.includes(rows[0].status)) throw new HttpError(403, "This step is not available.");
   req.ds = rows[0]; next();
 });
+// paid, but the driver never came back to the site: the letter has not been created yet ("finish" button)
 async function pendingPayments(phone) {
-  const { rows } = await q("SELECT merchant_reference, scenario, paid_at FROM payments WHERE phone=$1 AND status='paid' AND consumed_at IS NULL ORDER BY paid_at DESC LIMIT 5", [phone]);
+  const { rows } = await q("SELECT merchant_reference, scenario, paid_at FROM payments WHERE phone=$1 AND status='paid' AND letter_id IS NULL ORDER BY paid_at DESC LIMIT 5", [phone]);
+  return rows;
+}
+// letters that were paid for and are now being checked by staff
+async function awaitingLetters(phone) {
+  const { rows } = await q("SELECT letter_ref, downloaded_at AS created_at FROM downloaded_letters WHERE phone=$1 AND source='payment' AND status='unsent' ORDER BY downloaded_at DESC LIMIT 5", [phone]);
   return rows;
 }
 function parseRange(body) {
@@ -53,11 +57,13 @@ function cleanName(v) {
     throw new HttpError(400, "Please enter your full name (first name and father's name).");
   return n;
 }
-function sendPdf(res, pdf, name) {
-  res.set({ "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="${name}.pdf"`, "Cache-Control": "no-store", "Access-Control-Expose-Headers": "Content-Disposition" });
-  res.send(pdf);
+// first name + second (father's) name typed separately by a driver who is not in the fleet
+function cleanPart(v, label) {
+  const n = String(v || "").normalize("NFKC").replace(/\s+/g, " ").trim();
+  if (n.length < 2 || n.length > 40 || !/^[\p{L}\p{M}][\p{L}\p{M} .'\-]*$/u.test(n))
+    throw new HttpError(400, `Please enter your ${label}.`);
+  return n;
 }
-
 // ---- public config (fee + support phone) ----
 r.get("/config", ah(async (req, res) => res.json(pricing(await getSettings()))));
 
@@ -103,7 +109,7 @@ r.post("/verify-otp", rateLimit(30, 3600e3), ah(async (req, res) => {
   if (!drivers.length) { // phone is not in the fleet -> paid "customer not found" letter
     const message = await logErr(req, "PHONE_NOT_FOUND", phone, rec.plate);
     const token = await newSession({ phone, plate: rec.plate, status: "no_driver" });
-    return res.json({ token, state: "no_driver", message, phone, plate: rec.plate, ...pricing(s), pending: await pendingPayments(phone) });
+    return res.json({ token, state: "no_driver", message, phone, plate: rec.plate, ...pricing(s), pending: await pendingPayments(phone), awaiting: await awaitingLetters(phone) });
   }
   const hit = matchByPlate(drivers, rec.plate);
   if (!hit) {
@@ -113,7 +119,7 @@ r.post("/verify-otp", rateLimit(30, 3600e3), ah(async (req, res) => {
   }
   const driver = driverSnapshot(hit, phone);
   const token = await newSession({ phone, plate: driver.plate, status: "ready", contractorId: driver.contractor_id, driver });
-  res.json({ token, state: "ready", driver, ...pricing(s), pending: await pendingPayments(phone) });
+  res.json({ token, state: "ready", driver, ...pricing(s), pending: await pendingPayments(phone), awaiting: await awaitingLetters(phone) });
 }));
 
 // ---- 2b. wrong plate -> retry without a new OTP ----
@@ -129,7 +135,7 @@ r.post("/check-plate", rateLimit(30, 3600e3), requireSession("plate_required"), 
   }
   const driver = driverSnapshot(hit, ds.phone);
   await q("UPDATE driver_sessions SET status='ready', plate=$2, contractor_id=$3, driver=$4 WHERE token_hash=$1", [ds.token_hash, driver.plate, driver.contractor_id, JSON.stringify(driver)]);
-  res.json({ state: "ready", driver, ...pricing(await getSettings()), pending: await pendingPayments(ds.phone) });
+  res.json({ state: "ready", driver, ...pricing(await getSettings()), pending: await pendingPayments(ds.phone), awaiting: await awaitingLetters(ds.phone) });
 }));
 
 // ---- 3. transactions for a period (Ethiopian dates in, converted on the server) ----
@@ -151,9 +157,15 @@ r.post("/pay", rateLimit(20, 3600e3), requireSession("ready", "no_driver"), ah(a
     scenario = cash.count > 0 ? "with_transactions" : "no_transactions";
     snapshot = { driver: ds.driver, range: { etFrom: range.etFrom, etTo: range.etTo, gcFrom: range.gcFrom, gcTo: range.gcTo }, cash: { total: cash.total, count: cash.count, currency: cash.currency } };
   } else { // not in the fleet: the plate is already known from step 1, so only the name and the period are asked
-    const name = cleanName(req.body.fullName), range = parseRange(req.body);
-    const [first, ...rest] = name.split(" ");
-    who = { name, first_name: first, last_name: rest.join(" ") };
+    const range = parseRange(req.body);
+    let first, last;
+    if (req.body.firstName !== undefined || req.body.lastName !== undefined) {
+      first = cleanPart(req.body.firstName, "first name"); last = cleanPart(req.body.lastName, "second name");
+    } else { // older clients still send one "fullName" field
+      const [f, ...rest] = cleanName(req.body.fullName).split(" "); first = f; last = rest.join(" ");
+    }
+    const name = `${first} ${last}`;
+    who = { name, first_name: first, last_name: last };
     scenario = "no_driver";
     snapshot = { driver: who, plate: ds.plate, range: { etFrom: range.etFrom, etTo: range.etTo, gcFrom: range.gcFrom, gcTo: range.gcTo } };
   }
@@ -175,61 +187,14 @@ r.post("/pay", rateLimit(20, 3600e3), requireSession("ready", "no_driver"), ah(a
   } catch (e) { await q("UPDATE payments SET status='failed' WHERE id=$1", [ins.rows[0].id]); throw e; }
 }));
 
-// verify with Chapa (GET /transaction/verify/<tx_ref>) and mark paid (used by claim + callback/webhook)
-export async function confirmPayment(p) {
-  if (p.status === "paid") return true;
-  const v = await verifyPayment(p.merchant_reference);
-  if (!v.ok || !paymentMatches(v.data, p.merchant_reference, p.amount_cents, p.currency)) return false;
-  await q("UPDATE payments SET status='paid', paid_at=COALESCE(paid_at,now()), chapa_reference=$3, verify_payload=$2 WHERE id=$1 AND status<>'paid'",
-    [p.id, JSON.stringify(v.data), v.data?.data?.reference || null]);
-  return true;
-}
-
-// ---- 5. after payment: ONE download ----
+// ---- 5. after payment: NO download. The letter is created and waits for staff to check it; the driver gets an SMS link later ----
 r.post("/claim", requireSession("ready", "no_driver"), ah(async (req, res) => {
   const ref = String(req.body.reference || "");
   const { rows } = await q("SELECT * FROM payments WHERE merchant_reference=$1 AND phone=$2", [ref, req.ds.phone]);
   if (!rows[0]) throw new HttpError(404, "Payment not found.");
-  if (rows[0].consumed_at) throw new HttpError(409, "This payment has already been used to download its letter.");
-  if (!(await confirmPayment(rows[0]))) throw new HttpError(402, "Your payment has not been confirmed yet. If you have paid, wait a moment and try again.", { retry: true });
-
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const p = (await client.query("SELECT * FROM payments WHERE id=$1 FOR UPDATE", [rows[0].id])).rows[0];
-    if (p.consumed_at) throw new HttpError(409, "This payment has already been used to download its letter.");
-    const tpl = (await client.query("SELECT * FROM letter_templates WHERE default_for=$1", [p.scenario])).rows[0];
-    if (!tpl) throw new HttpError(500, "The letter template is not configured. Please contact support.");
-    const s = await getSettings(client), sn = p.snapshot;
-    const baseData = buildData({ driver: sn.driver, phone: p.phone, plate: sn.plate || p.plate, range: sn.range, cash: sn.cash, payment: p, settings: s });
-    const letter = await issueLetter(client, { source: "payment", template: tpl, baseData, scenario: p.scenario, phone: p.phone, plate: baseData.plate_number, contractorId: p.contractor_id, driverName: baseData.driver_name, paymentId: p.id });
-    const pdf = await htmlToPdf(letter.html);
-    await client.query("UPDATE payments SET consumed_at=now(), letter_id=$2 WHERE id=$1", [p.id, letter.id]);
-    await client.query("COMMIT");
-    sendPdf(res, pdf, letter.letterRef);
-  } catch (e) { await client.query("ROLLBACK").catch(() => {}); throw e; } finally { client.release(); }
-}));
-
-// ---- 6. staff-issued, single-use token ----
-r.post("/redeem-token", rateLimit(15, 3600e3), requireSession("ready", "no_driver"), ah(async (req, res) => {
-  const raw = cleanToken(req.body.token);
-  if (raw.length < 12) throw new HttpError(400, await msg("TOKEN_INVALID"));
-  const ds = req.ds, client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const t = (await client.query("SELECT * FROM download_tokens WHERE token_hash=$1 FOR UPDATE", [sha256(raw)])).rows[0];
-    if (!t || t.phone !== ds.phone || (t.contractor_id || null) !== (ds.contractor_id || null)) {
-      await client.query("ROLLBACK"); const m = await logErr(req, "TOKEN_INVALID", ds.phone, ds.plate); throw new HttpError(404, m);
-    }
-    if (t.used_at) { await client.query("ROLLBACK"); const m = await logErr(req, "TOKEN_USED", ds.phone, ds.plate, { token_hint: t.token_hint }); throw new HttpError(410, m); }
-    const tpl = (await client.query("SELECT * FROM letter_templates WHERE id=$1", [t.template_id])).rows[0];
-    const src = (await client.query("SELECT * FROM downloaded_letters WHERE id=$1", [t.source_letter_id])).rows[0];
-    const letter = await issueLetter(client, { source: "token", template: tpl, baseData: src.data, scenario: src.scenario, phone: t.phone, plate: t.plate, contractorId: t.contractor_id, driverName: t.driver_name, tokenId: t.id, reason: t.reason, issuedBy: t.created_by });
-    const pdf = await htmlToPdf(letter.html);
-    await client.query("UPDATE download_tokens SET used_at=now(), used_letter_id=$2 WHERE id=$1", [t.id, letter.id]);
-    await client.query("COMMIT");
-    sendPdf(res, pdf, letter.letterRef);
-  } catch (e) { await client.query("ROLLBACK").catch(() => {}); throw e; } finally { client.release(); }
+  const out = await fulfilPayment(rows[0]);
+  if (!out) throw new HttpError(402, "Your payment has not been confirmed yet. If you have paid, wait a moment and try again.", { retry: true });
+  res.json({ ok: true, letterRef: out.letterRef });
 }));
 
 export default r;

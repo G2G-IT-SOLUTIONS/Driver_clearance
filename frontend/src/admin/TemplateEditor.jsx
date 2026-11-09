@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { adm } from "../api.js";
 import { Icon, Modal, SCENARIOS } from "./ui.jsx";
 
@@ -11,10 +11,10 @@ function caretFromPoint(x, y) {
   if (document.caretPositionFromPoint) { const p = document.caretPositionFromPoint(x, y); if (!p) return null; const r = document.createRange(); r.setStart(p.offsetNode, p.offset); r.collapse(true); return r; }
   return null;
 }
-const DEFAULTS = { logo: { x: 60, y: 36, w: 130 }, signature: { x: 520, y: 880, w: 170 }, stamp: { x: 620, y: 830, w: 130 }, image: { x: 250, y: 300, w: 220 } };
-const rid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2));
+export const DEFAULTS = { logo: { x: 60, y: 36, w: 130 }, signature: { x: 520, y: 880, w: 170 }, stamp: { x: 620, y: 830, w: 130 }, image: { x: 250, y: 300, w: 220 } };
+export const rid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2));
 
-function readImage(file) {
+export function readImage(file) {
   return new Promise((resolve, reject) => {
     const fr = new FileReader();
     fr.onerror = reject;
@@ -33,7 +33,7 @@ function readImage(file) {
   });
 }
 
-function FloatImg({ el, selected, zoom, onSelect, onChange }) {
+export function FloatImg({ el, selected, zoom, onSelect, onChange }) {
   const start = (e, mode) => {
     e.preventDefault(); e.stopPropagation(); onSelect(el.id);
     const sx = e.clientX, sy = e.clientY, o = { ...el }, ratio = o.w / o.h;
@@ -54,17 +54,14 @@ function FloatImg({ el, selected, zoom, onSelect, onChange }) {
 }
 
 export default function TemplateEditor() {
-  const { id } = useParams(), [sp] = useSearchParams(), nav = useNavigate();
-  const fromLetter = sp.get("fromLetter");
+  const { id } = useParams(), nav = useNavigate();
   const [name, setName] = useState("Untitled template");
   const [elements, setElements] = useState([]);
   const [vars, setVars] = useState([]);
-  const [letter, setLetter] = useState(null);
   const [initial, setInitial] = useState(null);
   const [selId, setSelId] = useState(null);
   const [zoom, setZoom] = useState(1);
   const [preview, setPreview] = useState(null);
-  const [tokenOpen, setTokenOpen] = useState(false);
   const [err, setErr] = useState(""), [ok, setOk] = useState(""), [busy, setBusy] = useState(false);
   const bodyRef = useRef(null), saved = useRef(null), fileRef = useRef(null), fileKind = useRef("image");
 
@@ -74,13 +71,10 @@ export default function TemplateEditor() {
       try {
         setVars(await adm("/variables"));
         if (id) { const t = await adm(`/templates/${id}`); setName(t.name); setElements(t.elements); setInitial(t.body_html); }
-        else if (fromLetter) {
-          const l = await adm(`/letters/${fromLetter}`); setLetter(l);
-          setName(`Custom - ${l.driver_name || l.phone}`); setElements(l.tpl_elements); setInitial(l.tpl_body_html);
-        } else setInitial("<p>Write your letter here…</p>");
+        else setInitial("<p>Write your letter here…</p>");
       } catch (e) { setErr(e.message); }
     })();
-  }, [id, fromLetter]);
+  }, [id]);
   useEffect(() => { if (initial != null && bodyRef.current) bodyRef.current.innerHTML = toChips(initial); }, [initial]);
 
   // remember the last caret position inside the page
@@ -143,7 +137,7 @@ export default function TemplateEditor() {
     if (!sc) return; const tid = await save(); if (!tid) return;
     try { await adm(`/templates/${tid}/default`, { body: { scenario: sc } }); flash(`Saved as default for “${SCENARIOS[sc]}”`); } catch (e) { setErr(e.message); }
   };
-  const showPreview = async () => { setErr(""); try { const c = collect(); setPreview((await adm("/preview", { body: { ...c, letterId: letter?.id } })).html); } catch (e) { setErr(e.message); } };
+  const showPreview = async () => { setErr(""); try { const c = collect(); setPreview((await adm("/preview", { body: c })).html); } catch (e) { setErr(e.message); } };
 
   const groups = vars.reduce((a, v) => ((a[v.group] = a[v.group] || []).push(v), a), {});
   const Btn = ({ children, title, ...p }) => <button type="button" className="ed-btn" title={title} {...p}>{children}</button>;
@@ -153,13 +147,11 @@ export default function TemplateEditor() {
       <header className="ed-top">
         <Link to="/admin/templates" className="a-icon" title="Back"><Icon name="back" /></Link>
         <input className="ed-name" value={name} onChange={(e) => setName(e.target.value)} />
-        {letter && <span className="ed-chip">Custom letter for {letter.driver_name || letter.phone} · {letter.letter_ref}</span>}
         <div className="a-actions">
           {err && <span className="ed-err">{err}</span>}{ok && <span className="ed-ok">{ok}</span>}
-          <button className="a-btn" onClick={showPreview}><Icon name="eye" size={16} /> Preview{letter ? " with driver data" : ""}</button>
+          <button className="a-btn" onClick={showPreview}><Icon name="eye" size={16} /> Preview</button>
           <select className="a-input sm" value="" onChange={(e) => makeDefault(e.target.value)}><option value="">Save as default for…</option>{Object.entries(SCENARIOS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
           <button className="a-btn" onClick={save} disabled={busy}>Save template</button>
-          {letter && <button className="a-btn primary" onClick={() => setTokenOpen(true)}>Create free-download token</button>}
         </div>
       </header>
 
@@ -222,30 +214,6 @@ export default function TemplateEditor() {
       </div>
 
       {preview && <Modal title="Preview" wide onClose={() => setPreview(null)}><div className="ed-preview"><iframe title="preview" sandbox="" srcDoc={preview} /></div></Modal>}
-      {tokenOpen && <TokenSave letter={letter} name={name} collect={collect} onClose={() => setTokenOpen(false)} onDone={(t) => nav("/admin/tokens", { state: { newToken: t } })} />}
     </div>
-  );
-}
-
-function TokenSave({ letter, name, collect, onClose, onDone }) {
-  const [saveAs, setSaveAs] = useState("driver_only"), [reason, setReason] = useState(""), [tname, setTname] = useState(name), [err, setErr] = useState(""), [busy, setBusy] = useState(false);
-  const go = async () => {
-    setBusy(true); setErr("");
-    try { const c = collect(); const r = await adm("/tokens", { body: { letterId: letter.id, reason, template: { ...c, name: tname, saveAs } } }); onDone(r.token); } catch (e) { setErr(e.message); }
-    setBusy(false);
-  };
-  return (
-    <Modal title="Create free-download token" onClose={onClose}>
-      <p className="a-muted">For <strong>{letter.driver_name || letter.phone}</strong> ({letter.plate}). The driver can download this letter <strong>once</strong>.</p>
-      {err && <div className="a-error">{err}</div>}
-      <label className="a-label">Reason (kept in the log)</label>
-      <textarea className="a-input" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="What did the driver ask to change?" />
-      <label className="a-label">Save this letter</label>
-      <label className="a-radio"><input type="radio" checked={saveAs === "driver_only"} onChange={() => setSaveAs("driver_only")} /> Use for this driver only</label>
-      <label className="a-radio"><input type="radio" checked={saveAs === "template"} onChange={() => setSaveAs("template")} /> Save as a reusable template</label>
-      <label className="a-label">Template name</label>
-      <input className="a-input" value={tname} onChange={(e) => setTname(e.target.value)} />
-      <div className="a-actions end"><button className="a-btn primary" disabled={busy || reason.trim().length < 3 || !tname.trim()} onClick={go}>{busy ? "Creating…" : "Create token"}</button></div>
-    </Modal>
   );
 }

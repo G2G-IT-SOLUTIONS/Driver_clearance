@@ -22,6 +22,9 @@ COPY src ./src
 # schema.sql is read by "npm run db:init" (src/init.js looks for ../db/schema.sql)
 COPY db ./db
 
+# company signature + stamp (backend/assets/signature.png and stamp.png) added to every letter
+COPY assets ./assets
+
 EXPOSE "4001:3001"
 
 CMD ["npm", "start"]

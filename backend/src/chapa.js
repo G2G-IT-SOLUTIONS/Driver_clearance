@@ -36,10 +36,10 @@ export async function initCheckout({ amountCents, currency, txRef, customer, cal
 }
 
 // Step "Verify Payments": GET /transaction/verify/<tx_ref>
-export async function verifyPayment(txRef) {
+export async function verifyPayment(txRef, { quiet = false } = {}) {
   const res = await fetch(`${BASE}/transaction/verify/${encodeURIComponent(txRef)}`, { headers: headers() });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) { console.error("Chapa verify error:", res.status, JSON.stringify(data)); return { ok: false, data }; }
+  if (!res.ok) { if (!quiet) console.error("Chapa verify error:", res.status, JSON.stringify(data)); return { ok: false, data }; }
   return { ok: true, data };
 }
 

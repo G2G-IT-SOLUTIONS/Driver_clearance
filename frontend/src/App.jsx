@@ -1,6 +1,6 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import DriverApp from "./driver/DriverApp.jsx";
-import { AdminGuard, AdminLayout } from "./admin/Shell.jsx";
+import { AdminGuard, AdminLayout,AdminOnly } from "./admin/Shell.jsx";
 import Login from "./admin/Login.jsx";
 import LettersPage from "./admin/LettersPage.jsx";
 import TemplatesPage from "./admin/TemplatesPage.jsx";
@@ -24,11 +24,11 @@ export default function App() {
           <Route index element={<Navigate to="letters" replace />} />
           <Route path="letters" element={<LettersPage />} />
           <Route path="templates" element={<TemplatesPage />} />
-          <Route path="payments" element={<PaymentsPage />} />
-          <Route path="errors" element={<ErrorsPage />} />
-          <Route path="activity" element={<ActivityPage />} />
-          <Route path="settings" element={<SettingsPage />} />
-          <Route path="users" element={<UsersPage />} />
+          <Route path="payments" element={<AdminOnly><PaymentsPage /></AdminOnly>} />
+          <Route path="errors" element={<AdminOnly><ErrorsPage /></AdminOnly>} />
+          <Route path="activity" element={<AdminOnly><ActivityPage /></AdminOnly>} />
+          <Route path="settings" element={<AdminOnly><SettingsPage /></AdminOnly>} />
+          <Route path="users" element={<AdminOnly><UsersPage /></AdminOnly>} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

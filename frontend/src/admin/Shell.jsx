@@ -4,6 +4,7 @@ import { adminUser, adminLogout, adm } from "../api.js";
 import { Icon } from "./ui.jsx";
 import "./admin.css";
 
+export const AdminOnly = ({ children }) => (adminUser()?.role === "admin" ? children : <Navigate to="/admin/letters" replace />);
 export const AdminGuard = () => (adminUser() ? <Outlet /> : <Navigate to="/admin/login" replace />);
 
 const tabOf = (loc) => (loc.pathname === "/admin/letters" ? new URLSearchParams(loc.search).get("tab") || "unsent" : null);
@@ -12,9 +13,9 @@ const NAV = [
   ["/admin/letters?tab=unsent", "Unsent letters", "inbox", (l) => tabOf(l) === "unsent", false, true],
   ["/admin/letters?tab=all", "All letters", "letters", (l) => tabOf(l) === "sent" || tabOf(l) === "all", false, false],
   ["/admin/templates", "Templates", "templates", (l) => l.pathname.startsWith("/admin/templates")],
-  ["/admin/payments", "Payments", "payments", (l) => l.pathname.startsWith("/admin/payments")],
-  ["/admin/errors", "Driver errors", "errors", (l) => l.pathname.startsWith("/admin/errors")],
-  ["/admin/activity", "Activity log", "activity", (l) => l.pathname.startsWith("/admin/activity")],
+  ["/admin/payments", "Payments", "payments", (l) => l.pathname.startsWith("/admin/payments"), true],
+  ["/admin/errors", "Driver errors", "errors", (l) => l.pathname.startsWith("/admin/errors"), true],
+  ["/admin/activity", "Activity log", "activity", (l) => l.pathname.startsWith("/admin/activity"), true],
   ["/admin/settings", "Settings", "settings", (l) => l.pathname.startsWith("/admin/settings"), true],
   ["/admin/users", "Staff users", "users", (l) => l.pathname.startsWith("/admin/users"), true],
 ];

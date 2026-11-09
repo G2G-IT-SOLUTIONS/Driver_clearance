@@ -142,15 +142,15 @@ r.get("/letters/:id/pdf", staff, ah(async (req, res) => {
 }));
 
 // ---------- payments / logs ----------
-r.get("/payments", staff, ah(async (req, res) => {
+r.get("/payments", adminOnly, ah(async (req, res) => {
   const { rows } = await q(`SELECT p.id,p.merchant_reference,p.chapa_reference,p.amount_cents,p.currency,p.status,p.phone,p.plate,p.scenario,p.created_at,p.paid_at,p.consumed_at,
     l.letter_ref, l.id AS letter_id, l.status AS letter_status, p.snapshot->'driver'->>'name' AS driver_name FROM payments p LEFT JOIN downloaded_letters l ON l.id=p.letter_id ORDER BY p.created_at DESC LIMIT 500`);
   res.json(rows);
 }));
-r.get("/logs/activity", staff, ah(async (req, res) => {
+r.get("/logs/activity", adminOnly, ah(async (req, res) => {
   const { rows } = await q("SELECT * FROM activity_logs ORDER BY id DESC LIMIT 500"); res.json(rows);
 }));
-r.get("/logs/errors", staff, ah(async (req, res) => {
+r.get("/logs/errors", adminOnly, ah(async (req, res) => {
   const { rows } = await q("SELECT * FROM error_logs ORDER BY id DESC LIMIT 500"); res.json(rows);
 }));
 

@@ -7,7 +7,6 @@ import TemplatesPage from "./admin/TemplatesPage.jsx";
 import TemplateEditor from "./admin/TemplateEditor.jsx";
 import LetterEditor from "./admin/LetterEditor.jsx";
 import PaymentsPage from "./admin/PaymentsPage.jsx";
-import { ActivityPage, ErrorsPage } from "./admin/LogsPages.jsx";
 import SettingsPage from "./admin/SettingsPage.jsx";
 import UsersPage from "./admin/UsersPage.jsx";
 
@@ -25,8 +24,9 @@ export default function App() {
           <Route path="letters" element={<LettersPage />} />
           <Route path="templates" element={<TemplatesPage />} />
           <Route path="payments" element={<AdminOnly><PaymentsPage /></AdminOnly>} />
-          <Route path="errors" element={<AdminOnly><ErrorsPage /></AdminOnly>} />
-          <Route path="activity" element={<AdminOnly><ActivityPage /></AdminOnly>} />
+          {/* old links: both logs now live inside Settings */}
+          <Route path="errors" element={<Navigate to="/admin/settings?tab=errors" replace />} />
+          <Route path="activity" element={<Navigate to="/admin/settings?tab=activity" replace />} />
           <Route path="settings" element={<AdminOnly><SettingsPage /></AdminOnly>} />
           <Route path="users" element={<AdminOnly><UsersPage /></AdminOnly>} />
         </Route>

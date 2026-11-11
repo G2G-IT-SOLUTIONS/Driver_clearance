@@ -20,19 +20,24 @@ export default function LettersPage() {
   useEffect(() => { setD(null); loadDetail(); }, [sel]); // eslint-disable-line
   const refreshAll = () => { load(); loadDetail(); refreshUnsent(); };
   const setTab = (t) => setSp({ tab: t });
-  const open = (id) => { setSp({ tab, id }); setDtab("preview"); setMsg(""); };
+  const open = (id) => { if (id === sel) return close(); setSp({ tab, id }); setDtab("preview"); setMsg(""); };
+  const close = () => setSp({ tab });
+  useEffect(() => { // Esc closes the preview
+    const k = (e) => { if (e.key === "Escape" && sel && !sendOpen && !limitsOpen) close(); };
+    window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k);
+  }); // eslint-disable-line
   const lim = d?.limits;
   const reviewable = d && d.source === "payment" && (d.status === "unsent" || d.status === "sent");
 
   return (
     <>
-      <PageHead title="Letters" sub="A letter is created when a customer pays. Check it, edit it if needed, then send the download link to the customer's phone." />
+      <PageHead title="Letters" sub="Click a letter to preview it, edit it if needed, and send it to the customer." />
       <ErrorBar error={err} />
       {msg && <div className="a-ok">{msg}</div>}
       <div className="a-tabs a-tabs-top">
         {TABS.map(([k, l]) => <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}{k === "unsent" && unsent.count > 0 && <span className="a-count inline">{unsent.count}</span>}</button>)}
       </div>
-      <div className="a-split">
+      <div className={"a-split" + (sel ? " open" : "")}>
         <section className="a-card list">
           <form className="a-filters" onSubmit={(e) => { e.preventDefault(); load(); }}>
             <input className="a-input" placeholder="Search phone, plate, name, ref…" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} />
@@ -41,17 +46,15 @@ export default function LettersPage() {
             <button className="a-btn primary">Search</button>
           </form>
           <div className="a-tablewrap">
-            <table className="a-table clickable">
-              <thead><tr><th>Letter</th><th>Customer</th><th>Status</th><th>Edits</th><th>Sends</th><th>Paid / created</th></tr></thead>
+            <table className="a-table clickable letters">
+              <thead><tr><th>Letter</th><th>Customer</th><th>Status</th><th>Date</th></tr></thead>
               <tbody>
                 {rows?.map((r) => (
                   <tr key={r.id} className={sel === r.id ? "sel" : ""} onClick={() => open(r.id)}>
                     <td><strong>{r.letter_ref}</strong><small>{r.phone}</small></td>
                     <td>{r.driver_name || "—"}<small>{r.plate || "—"}</small></td>
-                    <td><Badge tone={r.status}>{STATUS[r.status] || r.status}</Badge>{r.open_count > 0 && <small>Opened {r.open_count}× · {fmt(r.last_opened_at)}</small>}</td>
-                    <td>{r.source === "payment" ? `${r.edit_count}/${r.max_edits}` : "—"}</td>
-                    <td>{r.source === "payment" ? `${r.send_count}/${r.max_sends}` : "—"}</td>
-                    <td>{fmt(r.paid_at || r.downloaded_at)}</td>
+                    <td><Badge tone={r.status}>{STATUS[r.status] || r.status}</Badge>{r.open_count > 0 && <small>Opened {r.open_count}×</small>}</td>
+                    <td className="nowrap">{fmt(r.paid_at || r.downloaded_at)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -60,14 +63,13 @@ export default function LettersPage() {
           </div>
         </section>
 
-        <section className="a-card detail">
-          {!sel && <Empty>Select a letter to preview it.</Empty>}
-          {sel && !d && <Empty>Loading…</Empty>}
+        {sel && <section className="a-card detail">
+          {!d && <Empty>Loading…</Empty>}
           {d && (
             <>
               <div className="a-detail-head">
                 <div><h2>{d.letter_ref}</h2><small>{d.driver_name || "Customer"} · {d.phone}</small></div>
-                <Badge tone={d.status}>{STATUS[d.status] || d.status}</Badge>
+                <div className="a-detail-tools"><Badge tone={d.status}>{STATUS[d.status] || d.status}</Badge><button className="a-icon" title="Close preview (Esc)" onClick={close}><Icon name="x" size={18} /></button></div>
               </div>
               {reviewable && (
                 <div className="a-limits">
@@ -89,7 +91,7 @@ export default function LettersPage() {
               {dtab === "info" && <Info d={d} />}
             </>
           )}
-        </section>
+        </section>}
       </div>
 
       {sendOpen && d && <SendModal d={d} onClose={() => setSendOpen(false)} onDone={(m) => { setSendOpen(false); setMsg(m); setDtab("history"); refreshAll(); }} setErr={setErr} />}

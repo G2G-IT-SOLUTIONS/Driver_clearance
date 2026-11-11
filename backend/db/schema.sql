@@ -88,22 +88,7 @@ CREATE TABLE IF NOT EXISTS downloaded_letters (
 CREATE INDEX IF NOT EXISTS ix_letters_phone ON downloaded_letters(phone);
 CREATE INDEX IF NOT EXISTS ix_letters_time ON downloaded_letters(downloaded_at DESC);
 
-CREATE TABLE IF NOT EXISTS download_tokens (
-  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  token_hash       text UNIQUE NOT NULL,
-  token_hint       text NOT NULL,                  -- last 4 characters only
-  contractor_id    text,
-  phone            text NOT NULL,
-  plate            text,
-  driver_name      text,
-  source_letter_id uuid NOT NULL REFERENCES downloaded_letters(id),
-  template_id      uuid NOT NULL REFERENCES letter_templates(id),
-  reason           text NOT NULL,
-  created_by       uuid NOT NULL REFERENCES users(id),
-  created_at       timestamptz NOT NULL DEFAULT now(),
-  used_at          timestamptz,
-  used_letter_id   uuid REFERENCES downloaded_letters(id)
-);
+
 
 CREATE TABLE IF NOT EXISTS otp_codes (
   phone      text PRIMARY KEY,
@@ -190,3 +175,21 @@ ALTER TABLE downloaded_letters
 CREATE INDEX IF NOT EXISTS ix_letters_status ON downloaded_letters(status, downloaded_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_letters_link ON downloaded_letters(link_token_hash) WHERE link_token_hash IS NOT NULL;
 CREATE INDEX IF NOT EXISTS ix_activity_entity ON activity_logs(entity_type, entity_id, id);
+
+-- =====================================================================================
+-- v4: header / footer / page margins in the template editor.
+-- A template keeps its header + footer (HTML with {{placeholders}}) and its page set-up.
+-- A letter gets its own FINAL copy (placeholders already filled in) so that editing the letter text can re-render it.
+-- (idempotent: safe to run again)
+-- =====================================================================================
+ALTER TABLE letter_templates
+  ADD COLUMN IF NOT EXISTS header_html text  NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS footer_html text  NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS page        jsonb NOT NULL DEFAULT '{}';   -- {mt,mr,mb,ml,header_on,footer_on,hh,fh} in px (A4 = 794 x 1123)
+ALTER TABLE downloaded_letters
+  ADD COLUMN IF NOT EXISTS header_html text  NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS footer_html text  NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS page        jsonb NOT NULL DEFAULT '{}';
+  
+
+  DROP TABLE IF EXISTS download_tokens;

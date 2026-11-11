@@ -284,3 +284,44 @@ select.a-input option { background: #1a181b; color: var(--a-ink); }
 .ed-banner { margin: 0; padding: 11px 18px; font-size: 13.5px; background: rgba(251,191,36,.1); color: #fcd34d; border-bottom: 1px solid rgba(251,191,36,.25); }
 .ed-rules { margin: 0 0 18px; padding-left: 18px; color: var(--a-mut); font-size: 13px; line-height: 1.6; } .ed-rules li { margin-bottom: 8px; } .ed-rules strong { color: var(--a-ink); }
 .ed-thumb { background: #fff; border-radius: 10px; padding: 8px; margin-bottom: 10px; } .ed-thumb img { max-width: 100%; max-height: 90px; display: block; margin: 0 auto; }
+
+/* ==========================================================================
+   Template editor v2: header / footer, page tools, find & replace
+   ========================================================================== */
+.body-edit, .hf-edit, .hf-wrap { box-sizing: border-box; }
+.body-edit a, .hf-edit a { color: #1d4ed8; }
+.ed-toolbar.row2 { border-top: 1px solid var(--a-line); padding-top: 6px; }
+.ed-btn.on { background: var(--a-soft); border-color: var(--a-brand); color: var(--a-brand); }
+.ed-btn.hilite { position: relative; cursor: pointer; } .ed-btn.hilite span { background: #fff59d; color: #111; padding: 0 4px; border-radius: 3px; font-weight: 700; } .ed-btn.hilite input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.ed-sel.narrow { width: 78px; }
+.ed-tbl { display: inline-flex; gap: 2px; padding: 0 6px; margin: 0 4px; border-left: 1px solid var(--a-line); border-right: 1px solid var(--a-line); } .ed-tbl .ed-btn { font-size: 12px; padding: 0 6px; }
+.ed-find { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 8px 12px; background: var(--a-panel, #fff); border-bottom: 1px solid var(--a-line); } .ed-find .a-input { width: 170px; }
+.ed-check { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; cursor: pointer; margin: 6px 0 4px; } .ed-find .ed-check { margin: 0; }
+.ed-dirty { color: #b45309; font-size: 13px; font-weight: 600; }
+.ed-status { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; padding: 6px 14px; background: var(--a-panel, #fff); border-top: 1px solid var(--a-line); font-size: 12.5px; color: var(--a-mut); } .ed-status strong { color: var(--a-ink); } .ed-status .warn { color: #b45309; font-weight: 600; }
+
+/* header / footer zones on the sheet */
+.hf-wrap { position: absolute; left: 0; right: 0; z-index: 2; border: 0 dashed #94a3b8; }
+.hf-wrap.hdr { top: 0; border-bottom-width: 1px; } .hf-wrap.ftr { bottom: 0; border-top-width: 1px; }
+.hf-wrap.act { background: rgba(99,102,241,.06); }
+.hf-wrap.ro { background: rgba(100,116,139,.07); pointer-events: none; }
+.hf-edit { height: 100%; overflow: hidden; font-size: 12px; line-height: 1.4; outline: 0; word-wrap: break-word; }
+.hf-edit p, .hf-edit div { margin: 0 0 .3em; } .hf-edit img { max-width: 100%; } .hf-edit table { border-collapse: collapse; width: 100%; } .hf-edit td, .hf-edit th { border: 1px solid #999; padding: 4px; }
+.hf-tag { position: absolute; right: 8px; top: 3px; z-index: 3; font: 600 10px/1 system-ui, sans-serif; color: #475569; background: #e2e8f0; padding: 3px 7px; border-radius: 4px; opacity: 0; transition: opacity .15s; pointer-events: none; }
+.hf-wrap:hover .hf-tag, .hf-wrap.act .hf-tag { opacity: 1; }
+.pg-guides { position: absolute; inset: 0; z-index: 1; pointer-events: none; background: repeating-linear-gradient(to bottom, transparent 0, transparent 1122px, rgba(99,102,241,.45) 1122px, rgba(99,102,241,.45) 1123px); }
+
+/* manual page break */
+.body-edit .pb { height: 0; margin: 18px 0; border-top: 2px dashed #a5b4fc; position: relative; user-select: none; }
+.body-edit .pb::after { content: "Page break"; position: absolute; left: 50%; top: -9px; transform: translateX(-50%); background: #fff; color: #6366f1; font: 600 10px/1 system-ui, sans-serif; padding: 0 8px; }
+.body-edit img, .hf-edit img { cursor: pointer; }
+/* ==========================================================================
+   Cleaner Letters page + Settings tabs
+   ========================================================================== */
+.a-split { grid-template-columns: minmax(0, 1fr); }                                   /* no letter selected: the list uses the full width */
+.a-split.open { grid-template-columns: minmax(0, 1fr) minmax(400px, .8fr); }          /* a letter is open: list + preview side by side */
+@media (max-width: 1100px) { .a-split.open { grid-template-columns: minmax(0, 1fr); } .a-split.open .list { display: none; } }  /* small screens: the preview replaces the list */
+.a-table.letters td { padding: 15px 16px; vertical-align: middle; } .a-table.letters th { padding: 12px 16px; }
+.a-table.letters td small { margin-top: 3px; } .a-table .nowrap { white-space: nowrap; color: var(--a-mut); }
+.a-detail-tools { display: flex; align-items: center; gap: 8px; }
+.a-sub { margin: 0 0 14px; }

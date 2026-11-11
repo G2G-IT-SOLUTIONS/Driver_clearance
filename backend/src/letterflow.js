@@ -55,7 +55,7 @@ export async function editLetter({ id, staff, ip, body_html, elements }) {
     const { diff, summary } = diffText(htmlToText(l.body_html), htmlToText(body));
     const imageChanges = diffElements(prevEls, els), editNo = l.edit_count + 1;
     await client.query("UPDATE downloaded_letters SET body_html=$2, elements=$3, rendered_html=$4, edit_count=edit_count+1, last_edited_at=now() WHERE id=$1",
-      [id, body, JSON.stringify(els), renderLetterHtml(body, els, {}, { raw: true })]);
+      [id, body, JSON.stringify(els), renderLetterHtml(body, els, {}, { raw: true, header: l.header_html, footer: l.footer_html, page: l.page })]);
     await logAct({ staff, ip }, "LETTER_EDIT", "letter", id,
       { letter_ref: l.letter_ref, edit_no: editNo, of: l.max_edits, edits_left: l.max_edits - editNo, ...summary, diff: compactDiff(diff), image_changes: imageChanges,
         formatting_only: !summary.added_words && !summary.removed_words && !imageChanges.length }, client);

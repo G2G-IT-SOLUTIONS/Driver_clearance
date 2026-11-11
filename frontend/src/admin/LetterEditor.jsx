@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { adm } from "../api.js";
 import { Icon, Modal, fmt } from "./ui.jsx";
 import { FloatImg, readImage, DEFAULTS, rid } from "./TemplateEditor.jsx";
+import { layoutOf, showTokens } from "./docTools.js";
 
 // Staff edit the text / images of a letter that a customer PAID for. There is no "new letter" here and no phone number:
 // the page only opens an existing letter. Every saved edit is counted and written to the letter's history.
@@ -52,6 +53,7 @@ export default function LetterEditor() {
 
   if (!l) return <div className="ed"><header className="ed-top"><Link to="/admin/letters" className="a-icon"><Icon name="back" /></Link>{err && <span className="ed-err">{err}</span>}</header></div>;
   const blocked = !lim.can_edit;
+  const L = layoutOf(l.page), hasHdr = L.header_on && !!l.header_html, hasFtr = L.footer_on && !!l.footer_html; // header / footer come from the template: shown, not editable
 
   return (
     <div className="ed">
@@ -87,7 +89,9 @@ export default function LetterEditor() {
           </div>
           <div className="ed-canvas" onPointerDown={() => setSelId(null)}>
             <div className="sheet" style={{ zoom }} onPointerDown={(e) => e.stopPropagation()}>
-              <div ref={bodyRef} className="body-edit" contentEditable={!blocked} suppressContentEditableWarning spellCheck={false} onInput={() => setTyped(true)} onFocus={() => setSelId(null)} />
+              {hasHdr && <div className="hf-wrap hdr ro" style={{ height: L.hh }}><div className="hf-edit" style={{ padding: `0 ${L.mr}px 0 ${L.ml}px` }} dangerouslySetInnerHTML={{ __html: showTokens(l.header_html) }} /></div>}
+              <div ref={bodyRef} className="body-edit" style={{ padding: `${L.top}px ${L.mr}px ${L.bottom}px ${L.ml}px` }} contentEditable={!blocked} suppressContentEditableWarning spellCheck={false} onInput={() => setTyped(true)} onFocus={() => setSelId(null)} />
+              {hasFtr && <div className="hf-wrap ftr ro" style={{ height: L.fh }}><div className="hf-edit" style={{ padding: `0 ${L.mr}px 0 ${L.ml}px` }} dangerouslySetInnerHTML={{ __html: showTokens(l.footer_html) }} /></div>}
               {elements.map((el) => <FloatImg key={el.id} el={el} zoom={zoom} selected={selId === el.id && !blocked} onSelect={(x) => !blocked && setSelId(x)} onChange={(a, p) => { if (!blocked) patchEl(a, p); }} />)}
             </div>
           </div>
@@ -96,6 +100,7 @@ export default function LetterEditor() {
           <h4>Rules for this letter</h4>
           <ul className="ed-rules">
             <li>Only the text of this letter can be changed. The company signature and stamp are added automatically to every letter and cannot be edited.</li>
+            {(hasHdr || hasFtr) && <li>The header and footer (shown greyed) come from the template and repeat on every page. They cannot be edited here.</li>}
             <li>The SMS always goes to the number the customer verified. Staff cannot change it.</li>
             <li>Every saved edit uses <strong>1 of {l.max_edits}</strong> edits and is recorded in the letter's history with what was added and removed.</li>
             <li>Edits close <strong>{l.edit_window_days} day{l.edit_window_days === 1 ? "" : "s"}</strong> after the letter was created.</li>

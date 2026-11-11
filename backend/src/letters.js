@@ -31,6 +31,9 @@ export const VARIABLES = [
   { group: "Letter", key: "letter_date_gc", label: "Letter date (Gregorian)", sample: "October 28, 2026" },
   { group: "Letter", key: "letter_ref", label: "Letter reference no.", sample: "G2G-2019-000123" },
   { group: "Contact", key: "support_phone", label: "G2G support phone", sample: "+251 900 000 000" },
+  // only meaningful in the header / footer: the PDF fills in the real numbers on every page
+  { group: "Page (header / footer)", key: "page_number", label: "Page number", sample: "1" },
+  { group: "Page (header / footer)", key: "page_count", label: "Total pages", sample: "1" },
 ];
 export const SAMPLE_DATA = Object.fromEntries(VARIABLES.map((v) => [v.key, v.sample]));
 const money = (n) => Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -63,13 +66,14 @@ const ALLOWED_STYLES = {
     "font-family": [/^[\w\s,'"\-]+$/], "line-height": [/^[\d.]+(px|em|%)?$/], "margin-left": [/^[\d.]+(px|em)$/],
     "margin-top": [/^[\d.]+(px|em)$/], "margin-bottom": [/^[\d.]+(px|em)$/], "padding-left": [/^[\d.]+(px|em)$/],
     width: [/^[\d.]+(px|%)$/], height: [/^[\d.]+(px|%|auto)$/], "letter-spacing": [/^[\d.\-]+(px|em)$/],
+    "text-indent": [/^[\d.]+(px|em)$/], "margin-right": [/^[\d.]+(px|em)$/],
   },
 };
 export const cleanBody = (html) => sanitizeHtml(String(html || ""), {
   allowedTags: ["p", "div", "span", "br", "b", "strong", "i", "em", "u", "s", "ul", "ol", "li", "h1", "h2", "h3", "h4", "hr", "font", "table", "thead", "tbody", "tr", "td", "th", "img", "blockquote", "sub", "sup", "a"],
   allowedAttributes: { "*": ["style", "class", "align"], font: ["size", "color", "face"], img: ["src", "alt", "width", "height"], td: ["colspan", "rowspan"], th: ["colspan", "rowspan"], a: ["href"] },
   allowedStyles: ALLOWED_STYLES,
-  allowedClasses: { "*": ["var"] },
+  allowedClasses: { "*": ["var", "pb"] }, // var = placeholder chip, pb = manual page break
   allowedSchemes: ["https", "http", "data"],
   allowedSchemesByTag: { img: ["https", "data"], a: ["https", "http"] },
 });
@@ -81,6 +85,28 @@ export function cleanElements(list) {
   })).filter((e) => e.src);
 }
 
+// ---------- page layout (A4 = 794 x 1123 px) ----------
+// mt/mr/mb/ml = page margins, header_on/footer_on = repeat a header / footer on every page, hh/fh = header / footer height.
+export const PAGE_DEFAULTS = { mt: 70, mr: 70, mb: 70, ml: 70, header_on: false, footer_on: false, hh: 90, fh: 70 };
+const clamp = (v, lo, hi, d) => (Number.isFinite(Number(v)) && v !== "" && v !== null ? Math.min(hi, Math.max(lo, Math.round(Number(v)))) : d);
+export function cleanPage(p) {
+  p = p && typeof p === "object" ? p : {};
+  return {
+    mt: clamp(p.mt, 0, 300, 70), mr: clamp(p.mr, 0, 300, 70), mb: clamp(p.mb, 0, 300, 70), ml: clamp(p.ml, 0, 300, 70),
+    header_on: p.header_on === true, footer_on: p.footer_on === true, hh: clamp(p.hh, 20, 300, 90), fh: clamp(p.fh, 20, 300, 70),
+  };
+}
+// top / bottom = the space really reserved at the top / bottom of every page (the header sits inside it)
+export function pageLayout(page) {
+  const p = cleanPage(page);
+  return { ...p, paged: p.header_on || p.footer_on, top: p.header_on ? Math.max(p.mt, p.hh) : p.mt, bottom: p.footer_on ? Math.max(p.mb, p.fh) : p.mb };
+}
+const PAGE_KEYS = new Set(["page_number", "page_count"]);
+const TOKEN = /\{\{\s*(page_number|page_count)\s*\}\}/g;
+const screenTokens = (h) => String(h || "").replace(TOKEN, "1");                                  // HTML preview: one page
+const pdfTokens = (h) => String(h || "").replace(TOKEN, (_, k) => `<span class="${k === "page_number" ? "pageNumber" : "totalPages"}"></span>`); // Chrome fills these in
+const noTokens = (h) => String(h || "").replace(TOKEN, "");                                         // not meaningful inside the letter text
+
 const CSS = `
 @page{size:A4;margin:0}
 *{box-sizing:border-box}
@@ -89,17 +115,31 @@ html,body{margin:0;padding:0;background:#fff}
 .body{padding:70px;line-height:1.55;word-wrap:break-word}
 .body p,.body div{margin:0 0 .6em}.body h1{font-size:26px;margin:.4em 0}.body h2{font-size:21px;margin:.4em 0}.body h3{font-size:17px;margin:.4em 0}
 .body ul,.body ol{margin:0 0 .6em 1.4em;padding:0}.body table{border-collapse:collapse;width:100%}.body td,.body th{border:1px solid #999;padding:6px}
-.body img{max-width:100%}.fl{position:absolute;display:block;object-fit:contain}`;
+.body img{max-width:100%}.body a{color:#1d4ed8}.body .pb{height:0;margin:0;break-after:page;page-break-after:always}.fl{position:absolute;display:block;object-fit:contain}
+.hf{position:absolute;left:0;right:0;overflow:hidden;font-size:12px;line-height:1.4}.hf.hdr{top:0}.hf.ftr{bottom:0}
+.hf p,.hf div{margin:0 0 .3em}.hf img{max-width:100%}.hf table{border-collapse:collapse;width:100%}.hf td,.hf th{border:1px solid #999;padding:4px}
+html.pdf .hf{display:none}
+html.pdf .page.paged{min-height:0}
+html.pdf .page.paged .body{padding:0 var(--mr) 0 var(--ml) !important}
+html.pdf .page.paged .fl-layer{position:absolute;left:0;top:calc(-1 * var(--mt))}`;
 
 // {{placeholders}} -> values (HTML-escaped; empty values show a dash)
 export const fillPlaceholders = (bodyHtml, data) =>
-  String(bodyHtml).replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => (data[k] !== undefined && data[k] !== "" ? esc(data[k]) : "—"));
+  String(bodyHtml).replace(/\{\{\s*(\w+)\s*\}\}/g, (m, k) => (PAGE_KEYS.has(k) ? `{{${k}}}` : data[k] !== undefined && data[k] !== "" ? esc(data[k]) : "—"));
 
-// raw = the body already holds the final text (a letter edited by staff): do not look for placeholders again
-export function renderLetterHtml(bodyHtml, elements, data, { raw = false } = {}) {
-  const body = raw ? String(bodyHtml) : fillPlaceholders(bodyHtml, data);
+// raw = the body / header / footer already hold the final text (a letter edited by staff): do not look for placeholders again
+// header / footer / page = the template's header HTML, footer HTML and page set-up (see pageLayout)
+export function renderLetterHtml(bodyHtml, elements, data, { raw = false, header = "", footer = "", page } = {}) {
+  const L = pageLayout(page), fill = (h) => (raw ? String(h || "") : fillPlaceholders(h || "", data));
+  const body = noTokens(fill(bodyHtml)), hdr = L.header_on ? fill(header) : "", ftr = L.footer_on ? fill(footer) : "";
   const imgs = (elements || []).map((e) => `<img class="fl" alt="" src="${esc(e.src)}" style="left:${num(e.x)}px;top:${num(e.y)}px;width:${num(e.w)}px;height:${num(e.h)}px">`).join("");
-  return `<!doctype html><html><head><meta charset="utf-8"><style>${CSS}</style></head><body><div class="page"><div class="body">${body}</div>${imgs}</div></body></html>`;
+  const pad = `${L.top}px ${L.mr}px ${L.bottom}px ${L.ml}px`;
+  // paged = a header / footer is on: the PDF then uses real page margins and Chrome repeats the header / footer on every page.
+  // The HTML copy (preview, in the browser) shows the header at the top and the footer at the bottom of the page.
+  const layout = L.paged ? `<meta name="g2g-layout" content="${esc(JSON.stringify({ top: L.top, bottom: L.bottom, mr: L.mr, ml: L.ml, hh: L.hh, fh: L.fh, header_on: L.header_on, footer_on: L.footer_on }))}"><template id="g2g-hdr">${pdfTokens(hdr)}</template><template id="g2g-ftr">${pdfTokens(ftr)}</template>` : "";
+  const zone = (cls, h, height, extra) => (h ? `<div class="hf ${cls}" style="height:${height}px;padding:${extra}">${screenTokens(h)}</div>` : "");
+  return `<!doctype html><html><head><meta charset="utf-8"><style>${CSS}</style>${layout}</head><body><div class="page${L.paged ? " paged" : ""}" style="--mt:${L.top}px;--mr:${L.mr}px;--ml:${L.ml}px">` +
+    `${zone("hdr", hdr, L.hh, `0 ${L.mr}px 0 ${L.ml}px`)}<div class="body" style="padding:${pad}">${body}</div>${zone("ftr", ftr, L.fh, `0 ${L.mr}px 0 ${L.ml}px`)}<div class="fl-layer">${imgs}</div></div></body></html>`;
 }
 
 let browserP = null;
@@ -128,12 +168,36 @@ function getBrowser(puppeteer) {
   }
   return browserP;
 }
+// Chrome draws the header / footer inside the page margins and can number the pages (<span class="pageNumber"> / "totalPages">).
+// If the printed text looks too small or too big, set PDF_HF_SCALE in .env (for example 1.33 or 0.75).
+const HF_SCALE = Number(process.env.PDF_HF_SCALE) > 0 ? Number(process.env.PDF_HF_SCALE) : 1;
+function hfTemplate(inner, { height, ml, mr, align }) {
+  if (!String(inner).trim()) return "<span></span>"; // an empty template would make Chrome print its own date / title
+  return `<style>html,body{margin:0;padding:0}p,div{margin:0 0 .3em}img{max-width:100%}table{border-collapse:collapse;width:100%}td,th{border:1px solid #999;padding:4px}</style>` +
+    `<div style="zoom:${HF_SCALE};box-sizing:border-box;width:100%;height:${height}px;padding:0 ${mr}px 0 ${ml}px;display:flex;flex-direction:column;justify-content:${align};overflow:hidden;` +
+    `font-family:'Noto Sans Ethiopic','Nyala','Segoe UI',Arial,sans-serif;font-size:12px;line-height:1.4;color:#111;-webkit-print-color-adjust:exact"><div>${inner}</div></div>`;
+}
 export async function htmlToPdf(html) {
   const puppeteer = (await import("puppeteer")).default;
   const browser = await getBrowser(puppeteer);
   const page = await browser.newPage();
   try {
     await page.setContent(html, { waitUntil: "load" });
-    return Buffer.from(await page.pdf({ format: "A4", printBackground: true, preferCSSPageSize: true }));
+    // letters without a header / footer keep the exact old output
+    const lay = await page.evaluate(() => {
+      const m = document.querySelector('meta[name="g2g-layout"]');
+      if (!m) return null;
+      return { o: JSON.parse(m.content), hdr: document.getElementById("g2g-hdr")?.innerHTML || "", ftr: document.getElementById("g2g-ftr")?.innerHTML || "" };
+    });
+    if (!lay) return Buffer.from(await page.pdf({ format: "A4", printBackground: true, preferCSSPageSize: true }));
+    const { top, bottom, ml, mr, hh, fh, header_on, footer_on } = lay.o;
+    await page.addStyleTag({ content: `@page{size:A4;margin:${top}px 0 ${bottom}px 0}` });
+    await page.evaluate(() => document.documentElement.classList.add("pdf"));
+    return Buffer.from(await page.pdf({
+      format: "A4", printBackground: true, preferCSSPageSize: true, displayHeaderFooter: true,
+      margin: { top: `${top}px`, bottom: `${bottom}px`, left: "0px", right: "0px" },
+      headerTemplate: header_on ? hfTemplate(lay.hdr, { height: top, ml, mr, align: "flex-start" }) : "<span></span>",
+      footerTemplate: footer_on ? hfTemplate(lay.ftr, { height: bottom, ml, mr, align: "flex-end" }) : "<span></span>",
+    }));
   } finally { await page.close(); }
 }

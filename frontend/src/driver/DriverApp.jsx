@@ -106,7 +106,7 @@ export default function DriverApp() {
       <div className="shell">
         <header className="brand">
           <div className="brand-plate">
-            {logoOk ? <img className="brand-logo" src=".../../public/logo-full.png" alt="G2G IT Solutions" onError={() => setLogoOk(false)} /> : <div className="brand-fallback">G2G IT SOLUTIONS</div>}
+            {logoOk ? <img className="brand-logo" src=".../../public/reallogo.png" alt="G2G IT Solutions" onError={() => setLogoOk(false)} /> : <div className="brand-fallback">G2G IT SOLUTIONS</div>}
           </div>
           <h1>Clearance Letter</h1>
           <p>Driver cash-collected statement</p>

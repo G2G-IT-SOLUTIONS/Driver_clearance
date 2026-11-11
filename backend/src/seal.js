@@ -36,5 +36,6 @@ export function withSeal(html) {
   const at = String(html).lastIndexOf(end);
   if (!imgs.length || at < 0 || String(html).includes("data-seal")) return html;
   const tags = imgs.map((s) => `<img data-seal alt="" src="${s.src}" style="position:absolute;left:${s.left}px;top:${s.top}px;width:${s.width}px;height:auto;display:block;transform:rotate(${Number(s.rotate) || 0}deg);transform-origin:center center;opacity:${s.opacity ?? 1}">`).join("");
-  return html.slice(0, at) + tags + html.slice(at);
+  // inside .fl-layer: in letters with a header / footer the PDF shifts this layer so the coordinates above stay measured from the page corner
+  return html.slice(0, at) + `<div class="fl-layer">${tags}</div>` + html.slice(at);
 }

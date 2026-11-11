@@ -10,14 +10,11 @@ export const AdminGuard = () => (adminUser() ? <Outlet /> : <Navigate to="/admin
 const tabOf = (loc) => (loc.pathname === "/admin/letters" ? new URLSearchParams(loc.search).get("tab") || "unsent" : null);
 // [link, label, icon, isActive(location), adminOnly, showUnsentBadge]
 const NAV = [
-  ["/admin/letters?tab=unsent", "Unsent letters", "inbox", (l) => tabOf(l) === "unsent", false, true],
-  ["/admin/letters?tab=all", "All letters", "letters", (l) => tabOf(l) === "sent" || tabOf(l) === "all", false, false],
+  ["/admin/letters?tab=unsent", "Letters", "inbox", (l) => tabOf(l) === "unsent", false, true],
   ["/admin/templates", "Templates", "templates", (l) => l.pathname.startsWith("/admin/templates")],
   ["/admin/payments", "Payments", "payments", (l) => l.pathname.startsWith("/admin/payments"), true],
-  ["/admin/errors", "Driver errors", "errors", (l) => l.pathname.startsWith("/admin/errors"), true],
-  ["/admin/activity", "Activity log", "activity", (l) => l.pathname.startsWith("/admin/activity"), true],
-  ["/admin/settings", "Settings", "settings", (l) => l.pathname.startsWith("/admin/settings"), true],
   ["/admin/users", "Staff users", "users", (l) => l.pathname.startsWith("/admin/users"), true],
+  ["/admin/settings", "Settings", "settings", (l) => l.pathname.startsWith("/admin/settings"), true],
 ];
 
 export function AdminLayout() {
@@ -40,7 +37,7 @@ export function AdminLayout() {
   return (
     <div className="a-shell">
       <aside className="a-side">
-        <div className="a-brand"><div className="a-brand-plate"><img className="a-logo-full" src="/logo-full.png" alt="G2G IT Solutions" /><img className="a-logo-mark" src="/logo-mark.png" alt="G2G" /></div><div className="a-brand-txt"><strong>Clearance</strong><small>Admin console</small></div></div>
+        <div className="a-brand"><div className="a-brand-plate"><img className="a-logo-full" src="/reallogo.png" alt="G2G IT Solutions" /><img className="a-logo-mark" src="/logo-mark.png" alt="G2G" /></div><div className="a-brand-txt"><strong>Clearance</strong><small>Admin console</small></div></div>
         <nav>
           {NAV.filter((n) => !n[4] || user.role === "admin").map(([to, label, icon, active, , badge]) => (
             <NavLink key={to} to={to} className={"a-nav" + (active(loc) ? " active" : "")}>

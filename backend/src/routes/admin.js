@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import { pool, q } from "../db.js";
 import { ah, HttpError, rateLimit } from "../util.js";
 import { requireStaff, signStaff, logAct } from "../auth.js";
-import { VARIABLES, SAMPLE_DATA, cleanBody, cleanElements, renderLetterHtml, htmlToPdf } from "../letters.js";
+import { VARIABLES, SAMPLE_DATA, cleanBody, cleanElements, cleanPage, renderLetterHtml, htmlToPdf } from "../letters.js";
 import { limitsOf, editLetter, sendLetter, setLimits, letterDefaults } from "../letterflow.js";
 import { withSeal } from "../seal.js";
 
@@ -27,12 +27,12 @@ r.get("/me", staff, (req, res) => res.json(req.staff));
 r.get("/variables", staff, (req, res) => res.json(VARIABLES));
 
 // ---------- templates ----------
-const tplList = `SELECT t.id,t.name,t.kind,t.default_for,t.body_html,t.elements,t.updated_at,t.created_at,t.for_contractor_id,
+const tplList = `SELECT t.id,t.name,t.kind,t.default_for,t.body_html,t.header_html,t.footer_html,t.page,t.elements,t.updated_at,t.created_at,t.for_contractor_id,
   cu.full_name AS created_by_name, uu.full_name AS updated_by_name
   FROM letter_templates t LEFT JOIN users cu ON cu.id=t.created_by LEFT JOIN users uu ON uu.id=t.updated_by`;
 r.get("/templates", staff, ah(async (req, res) => {
   const { rows } = await q(`${tplList} ORDER BY t.kind, t.updated_at DESC`);
-  res.json(rows.map((t) => ({ ...t, preview_html: renderLetterHtml(t.body_html, t.elements, SAMPLE_DATA) })));
+  res.json(rows.map((t) => ({ ...t, preview_html: renderLetterHtml(t.body_html, t.elements, SAMPLE_DATA, { header: t.header_html, footer: t.footer_html, page: t.page }) })));
 }));
 r.get("/templates/:id", staff, ah(async (req, res) => {
   const { rows } = await q(`${tplList} WHERE t.id=$1`, [req.params.id]);
@@ -42,17 +42,17 @@ r.get("/templates/:id", staff, ah(async (req, res) => {
 function tplBody(b) {
   const name = String(b.name || "").trim().slice(0, 120);
   if (!name) throw new HttpError(400, "Give the template a name.");
-  return { name, body: cleanBody(b.body_html), elements: cleanElements(b.elements) };
+  return { name, body: cleanBody(b.body_html), header: cleanBody(b.header_html), footer: cleanBody(b.footer_html), page: cleanPage(b.page), elements: cleanElements(b.elements) };
 }
 r.post("/templates", staff, ah(async (req, res) => {
   const t = tplBody(req.body);
-  const { rows } = await q("INSERT INTO letter_templates(name,body_html,elements,created_by,updated_by) VALUES($1,$2,$3,$4,$4) RETURNING id", [t.name, t.body, JSON.stringify(t.elements), req.staff.id]);
+  const { rows } = await q("INSERT INTO letter_templates(name,body_html,elements,header_html,footer_html,page,created_by,updated_by) VALUES($1,$2,$3,$5,$6,$7,$4,$4) RETURNING id", [t.name, t.body, JSON.stringify(t.elements), req.staff.id, t.header, t.footer, JSON.stringify(t.page)]);
   await logAct(req, "TEMPLATE_CREATE", "template", rows[0].id, { name: t.name });
   res.json({ id: rows[0].id });
 }));
 r.put("/templates/:id", staff, ah(async (req, res) => {
   const t = tplBody(req.body);
-  const { rows } = await q("UPDATE letter_templates SET name=$2, body_html=$3, elements=$4, updated_by=$5, updated_at=now() WHERE id=$1 RETURNING default_for", [req.params.id, t.name, t.body, JSON.stringify(t.elements), req.staff.id]);
+  const { rows } = await q("UPDATE letter_templates SET name=$2, body_html=$3, elements=$4, updated_by=$5, header_html=$6, footer_html=$7, page=$8, updated_at=now() WHERE id=$1 RETURNING default_for", [req.params.id, t.name, t.body, JSON.stringify(t.elements), req.staff.id, t.header, t.footer, JSON.stringify(t.page)]);
   if (!rows[0]) throw new HttpError(404, "Template not found.");
   await logAct(req, "TEMPLATE_UPDATE", "template", req.params.id, { name: t.name, default_for: rows[0].default_for });
   res.json({ ok: true });
@@ -80,7 +80,7 @@ r.post("/preview", staff, ah(async (req, res) => {
     const { rows } = await q("SELECT data FROM downloaded_letters WHERE id=$1", [req.body.letterId]);
     if (rows[0]) data = rows[0].data;
   }
-  res.json({ html: renderLetterHtml(cleanBody(req.body.body_html), cleanElements(req.body.elements), data) });
+  res.json({ html: renderLetterHtml(cleanBody(req.body.body_html), cleanElements(req.body.elements), data, { header: cleanBody(req.body.header_html), footer: cleanBody(req.body.footer_html), page: req.body.page }) });
 }));
 
 // ---------- letters of paid orders: waiting for staff / sent ----------
@@ -120,7 +120,7 @@ r.get("/letters/:id", staff, ah(async (req, res) => {
 }));
 // the editable text of a letter (for the editor)
 r.get("/letters/:id/editable", staff, ah(async (req, res) => {
-  const l = (await q("SELECT id,letter_ref,driver_name,phone,plate,source,status,body_html,elements,downloaded_at,max_edits,max_sends,edit_window_days,edit_count,send_count FROM downloaded_letters WHERE id=$1", [req.params.id])).rows[0];
+  const l = (await q("SELECT id,letter_ref,driver_name,phone,plate,source,status,body_html,header_html,footer_html,page,elements,downloaded_at,max_edits,max_sends,edit_window_days,edit_count,send_count FROM downloaded_letters WHERE id=$1", [req.params.id])).rows[0];
   if (!l) throw new HttpError(404, "Letter not found.");
   res.json({ ...l, limits: limitsOf(l) });
 }));
